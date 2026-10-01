@@ -56,12 +56,45 @@ internal static class AutoStart
         return false;
     }
 
-    /// <summary>当前是否已配置自启（计划任务或启动文件夹任一存在）。</summary>
+    /// <summary>当前是否已配置自启（三条路任一条存在即算）。</summary>
     public static bool IsEnabled()
     {
-        try { return TaskExists() || File.Exists(StartupShortcutPath); }
+        try
+        {
+            return TaskExists()
+                || File.Exists(StartupShortcutPath)
+                || File.Exists(StartupScriptPath)
+                || RunEntryExists();   // 兼容旧版本留下的注册表项
+        }
         catch { return false; }
     }
+
+    /// <summary>注册表 Run 项是否存在且非空。</summary>
+    private static bool RunEntryExists()
+    {
+        try
+        {
+            using Microsoft.Win32.RegistryKey? key =
+                Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, false);
+            object? v = key?.GetValue(RunValueName);
+            return v is string s && s.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 系统里是否**存在任何**自启痕迹（计划任务或启动文件夹快捷方式）。
+    ///
+    /// 与 IsEnabled 的区别只在语义：这个是给"自愈"用的——
+    /// 只要系统里还有一条痕迹，就说明用户曾想让它自启，
+    /// 于是启动时就把缺失的计划任务补回来。
+    /// 这样即使设置文件里的 AutoStart 标志失真（被重置、老版本没写回），
+    /// 自启也能自动恢复。
+    /// </summary>
+    public static bool AnyEntryExists() => IsEnabled();
 
     /// <summary>启用了哪种方式，用于界面提示。</summary>
     public static string CurrentMethod()
@@ -81,20 +114,44 @@ internal static class AutoStart
         }
     }
 
-    /// <summary>启用自启。优先计划任务，失败退回启动文件夹。</summary>
+    /// <summary>启用自启。计划任务 + 启动文件夹（含 VBS 包装），不用注册表。</summary>
     public static (bool Ok, string Method, string Detail) Enable(string exePath)
     {
-        // 两条路都试一遍并都保留：计划任务优先（更可靠），启动文件夹作为双保险。
+        // 三条路都配上，互为保险。
+        //
+        // 为什么要这么多条：实测本机存在"两条常规路都失效"的情况——
+        //   · 启动文件夹的 .lnk：Windows 从不往 StartupApproved\StartupFolder 写记录，
+        //     同一键里别的程序都有，唯独本程序没有，说明开机时根本没被执行
+        //   · 计划任务（登录触发）：任务 Status=Ready、定义正常，
+        //     但 Last Run Time 永远停在 1999/11/30（Never run），
+        //     而且任务定义文件还消失过两次
+        //
+        // 第 3 条刻意用 **.vbs 而不是 .lnk**：启动文件夹里的脚本由 explorer 直接执行，
+        // **不经过 StartupApproved 那套"用户是否禁用过"的记录机制**，
+        // 因此能绕开 .lnk 被忽略的问题；同时也不用写注册表，
+        // 用户的顾虑（不想动注册表）得以满足。
         bool taskOk = TryCreateTask(exePath, out string taskDetail);
         bool lnkOk = TryCreateStartupShortcut(exePath, out string lnkDetail);
+        bool vbsOk = TryCreateStartupScript(exePath, out string vbsDetail);
 
-        if (taskOk && lnkOk) return (true, "计划任务 + 启动文件夹", "两条路径都已配置");
-        if (taskOk) return (true, "计划任务", taskDetail);
-        if (lnkOk) return (true, "启动文件夹", lnkDetail + "（计划任务创建失败：" + taskDetail + "）");
-        return (false, "", "两种方式都失败 —— " + taskDetail + " / " + lnkDetail);
+        var methods = new List<string>();
+        if (taskOk) methods.Add("计划任务");
+        if (lnkOk) methods.Add("启动文件夹快捷方式");
+        if (vbsOk) methods.Add("启动文件夹脚本");
+
+        if (methods.Count > 0)
+        {
+            var details = new List<string>();
+            if (taskOk) details.Add(taskDetail);
+            if (lnkOk) details.Add(lnkDetail);
+            if (vbsOk) details.Add(vbsDetail);
+            return (true, string.Join(" + ", methods), string.Join("；", details));
+        }
+
+        return (false, "", "三种方式都失败 —— " + taskDetail + " / " + lnkDetail + " / " + vbsDetail);
     }
 
-    /// <summary>关闭自启：两条路都清掉，避免留下多余项。</summary>
+    /// <summary>关闭自启：三条路都清掉，避免留下多余项。</summary>
     public static (bool Ok, string Detail) Disable()
     {
         var sb = new StringBuilder();
@@ -106,26 +163,116 @@ internal static class AutoStart
             else { ok = false; sb.Append("删除计划任务失败：" + d); }
         }
 
+        // 早先版本用过注册表 Run 项，这里一并清理，避免留下孤儿启动项
         try
         {
-            if (File.Exists(StartupShortcutPath))
+            using Microsoft.Win32.RegistryKey? key =
+                Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, true);
+            if (key?.GetValue(RunValueName) is not null)
             {
-                File.Delete(StartupShortcutPath);
+                key.DeleteValue(RunValueName, false);
                 if (sb.Length > 0) sb.Append("；");
-                sb.Append("已删除启动项快捷方式");
+                sb.Append("已清理注册表启动项（旧版本遗留）");
             }
         }
-        catch (Exception ex)
+        catch { }
+
+        foreach (string path in new[] { StartupShortcutPath, StartupScriptPath })
         {
-            ok = false;
-            sb.Append("；删除快捷方式失败：" + ex.Message);
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    if (sb.Length > 0) sb.Append("；");
+                    sb.Append($"已删除 {Path.GetFileName(path)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                ok = false;
+                sb.Append($"；删除 {Path.GetFileName(path)} 失败：{ex.Message}");
+            }
         }
 
         if (sb.Length == 0) sb.Append("本来就没有配置自启");
         return (ok, sb.ToString());
     }
 
+    // ================= 启动文件夹里的 VBS 脚本 =================
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValueName = "ScreenTime";
+
+    /// <summary>
+    /// 在「启动」文件夹里放一个 .vbs 脚本。
+    ///
+    /// 为什么用脚本而不是快捷方式：
+    ///   启动文件夹里的 **.lnk 会经过 Explorer 的 StartupApproved 记录机制**——
+    ///   Windows 只有在真正处理过某项之后才往
+    ///   `Explorer\StartupApproved\StartupFolder` 写记录，而本程序的 .lnk
+    ///   从来没出现在那个键里（同键里 RK Keyboard.lnk、Ollama.lnk 都有），
+    ///   说明开机时它根本没被执行。
+    ///
+    ///   .vbs 由 explorer 直接交给 Windows Script Host 执行，
+    ///   不参与那套记录机制，因此能绕开这个问题。
+    ///   顺带的好处是不需要写任何注册表。
+    /// </summary>
+    private static bool TryCreateStartupScript(string exePath, out string detail)
+    {
+        try
+        {
+            // 0 = 隐藏窗口；False = 不等待进程结束
+            string vbs =
+                "' 屏幕使用时间 - 开机静默启动脚本\r\n" +
+                "' 放在「启动」文件夹里，登录时自动运行。\r\n" +
+                "' 取消勾选开机自启会自动删除本文件。\r\n" +
+                "Set sh = CreateObject(\"WScript.Shell\")\r\n" +
+                "sh.Run \"\"\"" + exePath + "\"\" --minimized\", 0, False\r\n";
+
+            File.WriteAllText(StartupScriptPath, vbs, new UTF8Encoding(false));
+            detail = "已创建启动文件夹脚本（不受 StartupApproved 限制）";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            detail = "创建启动脚本失败：" + ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>开始菜单「启动」文件夹里的快捷方式路径。</summary>
+    private static string StartupShortcutPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+                     "屏幕使用时间.lnk");
+
+    /// <summary>开始菜单「启动」文件夹里的 VBS 脚本路径。</summary>
+    private static string StartupScriptPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+                     "屏幕使用时间.vbs");
+
     // ================= 计划任务 =================
+
+    /// <summary>
+    /// 确保计划任务真的存在。用于**每次程序启动时自愈**。
+    ///
+    /// 为什么需要：计划任务只有"勾选自启"或"安装程序调用 --autostart on"时才创建。
+    /// 一旦它因为任何原因消失（卸载程序清理、Windows 更新、用户手动删除、
+    /// 或者重装时用了不带该逻辑的老安装程序），自启就只剩启动文件夹那一条路，
+    /// 而那条路在本机是失效的——用户看到的就是"我明明勾了自启，重启后却没启动"。
+    ///
+    /// 所以只要设置里标记了自启，每次启动都检查一遍，缺了就补上。
+    /// 一次 COM 调用，成本极低，换来自启不会再"莫名失效"。
+    /// </summary>
+    public static bool EnsureTask(string exePath, out string detail)
+    {
+        if (TaskExists())
+        {
+            detail = "计划任务已存在";
+            return true;
+        }
+        return TryCreateTask(exePath, out detail);
+    }
 
     /// <summary>
     /// 创建"登录时触发 + 静默启动"的计划任务。
@@ -235,11 +382,7 @@ internal static class AutoStart
         }
     }
 
-    // ================= 启动文件夹（退路） =================
-
-    private static string StartupShortcutPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup),
-                     "屏幕使用时间.lnk");
+    // ================= 启动文件夹（第三条保险） =================
 
     private static bool TryCreateStartupShortcut(string exePath, out string detail)
     {

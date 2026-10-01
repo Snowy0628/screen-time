@@ -885,6 +885,49 @@ internal sealed class TrayContext : IDisposable
         {
             _log.Warn($"应用设置失败：{ex.Message}");
         }
+
+        // 自启自愈：把缺失的计划任务补齐。
+        //
+        // 计划任务会因各种原因消失（卸载程序清理、重装用了旧安装程序、
+        // 用户手动删除、Windows 更新等），而启动文件夹那条路在本机不生效，
+        // 结果就是"勾了自启但重启后没启动"。
+        //
+        // 判据不能只看设置里的 AutoStart 标志——那个标志有可能因为
+        // 命令行未写回（老版本 --autostart on 就漏了）、设置文件被重置等原因失真。
+        // 再加一条：**系统里还存在启动项**（快捷方式或计划任务）也视为用户想自启。
+        // 两道判据取并集，比单看标志可靠得多。
+        try
+        {
+            AppSettings s = AppSettings.Current;
+            bool userWantsAutoStart = s.AutoStart || AutoStart.AnyEntryExists();
+
+            if (userWantsAutoStart)
+            {
+                string? exe = Environment.ProcessPath;
+                if (!string.IsNullOrEmpty(exe))
+                {
+                    if (AutoStart.EnsureTask(exe, out string detail))
+                    {
+                        _log.Info($"自启检查：{detail}");
+                        // 顺带把标志纠正回来，让设置面板的勾选状态与实际情况一致
+                        if (!s.AutoStart)
+                        {
+                            s.AutoStart = true;
+                            s.Save();
+                            _log.Info("自启检查：设置里的标志与实际不符，已纠正为已启用");
+                        }
+                    }
+                    else
+                    {
+                        _log.Warn($"自启检查：计划任务缺失且重建失败 —— {detail}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"自启自愈失败：{ex.Message}");
+        }
     }
 
     private void ExitApp()

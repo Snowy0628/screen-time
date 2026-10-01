@@ -510,6 +510,39 @@ internal static class Installer
         CreateShortcut(Path.Combine(startup, DisplayName + ".lnk"), exePath, InstallDir, "--minimized", 7);
         Console.WriteLine("        已加入启动文件夹（登录后静默启动，只留托盘）");
 
+        // **必须同时建计划任务**，不能只靠启动文件夹。
+        //
+        // 实测教训：本机的「启动文件夹」机制是失效的——Windows 只在真正处理过
+        // 某项之后才往 Explorer\StartupApproved\StartupFolder 写记录，
+        // 而我们的快捷方式从来没出现在那个键里，说明开机时根本没被执行
+        // （同一键里 RK Keyboard.lnk、Ollama.lnk 都有记录，程序那一项始终没有）。
+        //
+        // 更麻烦的是：计划任务此前**只有程序自己运行起来才会建**
+        // （--autostart on 或设置面板勾选）。于是每重装一次，自启就退化成
+        // "只有启动文件夹"这一条无效的路——用户反复反馈"装了还是不能自启"，
+        // 根因就在这里。安装时直接让程序把两条路都配上。
+        try
+        {
+            var psi = new ProcessStartInfo(exePath)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = InstallDir,
+            };
+            psi.ArgumentList.Add("--autostart");
+            psi.ArgumentList.Add("on");
+
+            using Process? p = Process.Start(psi);
+            if (p is not null && p.WaitForExit(30000))
+                Console.WriteLine($"        已配置计划任务（程序返回码 {p.ExitCode}）");
+            else
+                Console.WriteLine("        [提示] 计划任务配置超时，可稍后在设置面板里勾选");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"        [提示] 计划任务配置失败（不影响启动文件夹）：{ex.Message}");
+        }
+
         // ---------- 6. 启动并验证 ----------
         Step("6/6", "启动并验证");
         try

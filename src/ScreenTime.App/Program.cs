@@ -323,12 +323,31 @@ internal static class Program
                             Console.WriteLine(ok
                                 ? $"✓ 已启用（方式：{method}）——{detail}"
                                 : $"✗ 启用失败：{detail}");
+
+                            // **必须同时把设置里的标志置位**。
+                            //
+                            // 曾经漏了这一步：命令行只建了任务/快捷方式，却没写标志，
+                            // 于是"勾了自启"这个状态在设置里永远是 false，
+                            // 依赖该标志的自愈逻辑（TrayContext.ApplyRuntimeSettings）
+                            // 永远不会执行——任务一旦丢失就再也没人补回来。
+                            // 这正是用户反复遇到"勾了自启、重启却没启动"的根因之一。
+                            if (ok)
+                            {
+                                AppSettings.Current.AutoStart = true;
+                                AppSettings.Current.Save();
+                                Console.WriteLine("  已记入设置（下次启动会检查并自动修复）");
+                            }
                             return ok ? 0 : 1;
                         }
                         if (sub is "off" or "disable")
                         {
                             (bool ok, string detail) = AutoStart.Disable();
                             Console.WriteLine(ok ? $"✓ 已关闭——{detail}" : $"✗ 关闭失败：{detail}");
+                            if (ok)
+                            {
+                                AppSettings.Current.AutoStart = false;
+                                AppSettings.Current.Save();
+                            }
                             return ok ? 0 : 1;
                         }
 
@@ -467,6 +486,25 @@ internal static class Program
 
             MainWindow? window = null;
             using var context = new TrayContext(store, recorder, log, () => app.Shutdown());
+
+            // 启动痕迹：每次启动往数据目录追加一行。
+            //
+            // 用途：排查"开机自启到底有没有被执行"。用户报告"重启后没有自动启动"时，
+            // 只看进程列表无法区分两种情况：
+            //   1. 计划任务/启动项根本没被触发
+            //   2. 触发了，但程序立刻退出（崩溃、单实例互斥、权限问题）
+            // 只要这个文件里有一行时间是本次开机时间，就说明任务确实跑过。
+            try
+            {
+                string bootMark = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(log.LogPath) ?? ".", "boot-history.log");
+                System.IO.File.AppendAllText(bootMark,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  pid={Environment.ProcessId}  " +
+                    $"args=[{string.Join(' ', args)}]  " +
+                    $"开机已过={Environment.TickCount64 / 1000}s{Environment.NewLine}",
+                    new System.Text.UTF8Encoding(false));
+            }
+            catch { }
 
             // 托盘不可用时（系统拒绝注册），必须保留可见窗口作为唯一入口，
             // 否则用户把窗口关掉/收进托盘后就彻底找不回界面了。
