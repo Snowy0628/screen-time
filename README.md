@@ -461,8 +461,8 @@ ScreenTime.App.exe    Mandatory Label\Low Mandatory Level:(I)(NW)
 把程序部署到**干净位置**并清除标签：
 
 ```powershell
-robocopy <dist> "$env:LOCALAPPDATA\ScreenTimeApp" /E
-icacls "$env:LOCALAPPDATA\ScreenTimeApp" /setintegritylevel '(OI)(CI)Medium' /T /C
+robocopy <dist> "C:\ScreenTime" /E
+icacls "C:\ScreenTime" /setintegritylevel '(OI)(CI)Medium' /T /C
 ```
 
 **一键完成**：`tools/deploy.ps1`（构建 → 发布 → 部署 → 清标签 → 复核 → 启动验证），
@@ -470,7 +470,7 @@ icacls "$env:LOCALAPPDATA\ScreenTimeApp" /setintegritylevel '(OI)(CI)Medium' /T 
 
 ### 实测验证结果
 
-部署到 `%LOCALAPPDATA%\ScreenTimeApp` 并清标签后：
+部署到 `C:\ScreenTime` 并清标签后：
 
 ```
 结论：托盘图标注册成功（若界面上看不到，是被 Windows 11 折叠进了溢出区）
@@ -487,7 +487,7 @@ icacls "$env:LOCALAPPDATA\ScreenTimeApp" /setintegritylevel '(OI)(CI)Medium' /T 
 
 | 项目 | 位置 |
 |---|---|
-| 程序 | `%LOCALAPPDATA%\ScreenTimeApp\` |
+| 程序 | `C:\ScreenTime\` |
 | 数据 | `%LOCALAPPDATA%\ScreenTime\`（`usage.db`、`app.log`、`settings.json`、`tray-status.txt`） |
 | 桌面快捷方式 | `屏幕使用时间.lnk`、`ScreenTime.lnk` → 都指向新位置 |
 | 开机自启 | 启动文件夹 `屏幕使用时间.lnk`（带 `--minimized`，登录时由 explorer 以中完整性启动） |

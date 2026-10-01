@@ -21,7 +21,10 @@ using System.Threading;
 
 internal static class Uninstaller
 {
-    private const string AppFolderName = "ScreenTimeApp";
+    /// <summary>当前安装目录名（程序装到 C:\ScreenTime）。</summary>
+    private const string FolderNameNew = "ScreenTime";
+    /// <summary>用过的旧目录名，卸载时要一并查找。</summary>
+    private const string FolderNameOld = "ScreenTimeApp";
     private const string DataFolderName = "ScreenTime";
     private const string ExeName = "ScreenTime.App.exe";
     private const string DisplayName = "屏幕使用时间";
@@ -379,8 +382,20 @@ internal static class Uninstaller
         // 显式指定的目录优先（也用于自动化测试）
         if (!string.IsNullOrWhiteSpace(_dirOverride)) candidates.Add(_dirOverride!);
 
-        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), AppFolderName));
-        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppFolderName));
+        // 程序历来装过的所有位置，一个都不能漏——
+        // 漏掉的后果是"卸载完了但旧的那份还在跑"。
+        //   1. C:\ScreenTime        当前首选
+        //   2. C:\ScreenTimeApp     短暂用过的名字
+        //   3. %USERPROFILE%\...    统一前的用户目录位置
+        //   4. %LOCALAPPDATA%\...   最早的位置
+        foreach (string name in new[] { FolderNameNew, FolderNameOld })
+        {
+            candidates.Add(@"C:\" + name);
+            candidates.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), name));
+            candidates.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), name));
+        }
 
         // 卸载程序自己所在的目录：只有确实是"安装"过的目录才算
         string selfDir = AppContext.BaseDirectory.TrimEnd('\\', '/');

@@ -1,9 +1,9 @@
-﻿$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $ws  = 'C:\Users\MR\Desktop\ScreenTime'
 $pkg = Join-Path $ws 'package\屏幕使用时间-安装包'
-$dst = 'C:\Users\MR\ScreenTimeApp'
+$dst = 'C:\ScreenTime'
 $std = Join-Path $env:LOCALAPPDATA 'ScreenTime'
 
 # 本轮所有修复：用源码里的特征字符串确认，再确认产物与源码同一构建

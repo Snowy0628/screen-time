@@ -8,7 +8,7 @@
 //      所以安装时必须显式把整个安装目录设回中完整性。
 //   2. 需要正确创建工作目录之外的快捷方式与开机自启项。
 //
-// 安装位置刻意选在 %USERPROFILE%\ScreenTimeApp（或 %LOCALAPPDATA%\ScreenTimeApp）：
+// 安装位置默认选在 C:\ScreenTime（候选与历史位置见下方 InstallDirCandidates）：
 //   这是用户自己的目录，无需管理员权限，且没有低完整性标签。
 //   两者都可行，实际沿用已存在的那个，避免升级时装成两份。
 using System;
@@ -20,42 +20,71 @@ using System.Text;
 
 internal static class Installer
 {
-    private const string AppFolderName = "ScreenTimeApp";
+    /// <summary>安装目录的文件夹名（默认装到 C:\ScreenTime）。</summary>
+    private const string AppFolderName = "ScreenTime";
     private const string ExeName = "ScreenTime.App.exe";
     private const string DisplayName = "屏幕使用时间";
     private const string UninstallerName = "卸载.exe";
 
-    private static string InstallDir = DefaultInstallDir;
+    /// <summary>
+    /// 实际安装目录。**惰性求值**，不要在字段初始化器里直接调 DefaultInstallDir。
+    ///
+    /// 踩过的坑：写成 `private static string InstallDir = DefaultInstallDir;`
+    /// 时，这行按**声明顺序**先于下面的 InstallDirCandidates 执行，
+    /// 于是 getter 里读到的是 null，启动就抛
+    /// TypeInitializationException + NullReferenceException。
+    /// 用属性惰性求值就不依赖字段顺序了。
+    /// </summary>
+    private static string? _installDir;
+    private static string InstallDir
+    {
+        get => _installDir ??= DefaultInstallDir;
+        set => _installDir = value;
+    }
 
     /// <summary>
-    /// 安装位置。
+    /// 安装位置的候选，按优先级排列。**优先沿用已存在的位置**，
+    /// 避免升级时装成两份；都没装过才用首选位置。
     ///
-    /// 为什么用 %USERPROFILE% 而不是 %LOCALAPPDATA%：
-    /// 两者都能避免桌面的低完整性标签问题，但实测部署脚本与用户机器上
-    /// 一直是 %USERPROFILE%\ScreenTimeApp。曾经这里写成 %LOCALAPPDATA%，
-    /// 与部署脚本不一致，会出现"装了两份、只删掉一份"的混乱。
-    /// 现在统一为 %USERPROFILE%，同时**升级时优先沿用已存在的旧位置**，
-    /// 避免老用户升级后变成两份安装。
+    /// 历来的三个位置及变更原因：
+    ///   1. %LOCALAPPDATA%\ScreenTimeApp —— 最早的写法，但部署脚本用的是 %USERPROFILE%，
+    ///      不一致会导致"装了两份、只删掉一份"。
+    ///   2. %USERPROFILE%\ScreenTimeApp —— 统一后的位置，可用，但路径较深。
+    ///   3. C:\ScreenTime —— 现在的首选。路径短、好找，
+    ///      也便于把源码等项目文件放在同一个根目录下统一管理。
     /// </summary>
+    private static readonly string[] InstallDirCandidates =
+    {
+        @"C:\" + AppFolderName,
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), AppFolderName),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppFolderName),
+    };
+
     private static string DefaultInstallDir
     {
         get
         {
-            string userProfile = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), AppFolderName);
-            string localAppData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppFolderName);
+            // 已经装过的地方优先，就地升级
+            foreach (string dir in InstallDirCandidates)
+            {
+                try
+                {
+                    if (File.Exists(Path.Combine(dir, ExeName))) return dir;
+                }
+                catch { }
+            }
 
-            // 旧位置有程序文件 → 就地升级，不要另起一份
+            // 都没装过：用首选位置。写不进去（无权限等）才退回用户目录。
+            string first = InstallDirCandidates[0];
             try
             {
-                if (!Directory.Exists(userProfile) &&
-                    File.Exists(Path.Combine(localAppData, ExeName)))
-                    return localAppData;
+                if (!Directory.Exists(first)) Directory.CreateDirectory(first);
+                return first;
             }
-            catch { }
-
-            return userProfile;
+            catch
+            {
+                return InstallDirCandidates[1];
+            }
         }
     }
 
@@ -135,6 +164,7 @@ internal static class Installer
     /// </summary>
     private static bool PromptInstallDir()
     {
+        string srcDir = AppContext.BaseDirectory;
         while (true)
         {
             Console.WriteLine("  安装位置：");
@@ -149,7 +179,12 @@ internal static class Installer
 
             if (input is null) return true;             // 无交互环境：用默认值
             input = input.Trim().Trim('"');
-            if (input.Length == 0) return true;         // 回车：用默认值
+            if (input.Length == 0)
+            {
+                // 默认位置也要查一遍：默认值有可能是被 --dir 之外的逻辑改过的
+                if (!CheckInstallTarget(InstallDir, srcDir)) continue;
+                return true;
+            }
 
             string candidate = input;
 
@@ -157,29 +192,8 @@ internal static class Installer
             if (candidate.EndsWith(":") || candidate.EndsWith(":\\") || candidate.EndsWith(":/"))
                 candidate = Path.Combine(candidate, AppFolderName);
 
-            string? problem = ExplainBadLocation(candidate);
-            if (problem is not null)
-            {
-                Console.WriteLine();
-                Console.WriteLine("  ┌────────────────────────────────────────────────────────────┐");
-                Console.WriteLine("  │  不建议安装到这个位置                                      │");
-                Console.WriteLine("  └────────────────────────────────────────────────────────────┘");
-                Console.WriteLine();
-                foreach (string line in problem.Split('\n'))
-                    Console.WriteLine("  " + line);
-                Console.WriteLine();
-                Console.Write("  仍要装到这里吗？(y/N) ");
-                string? force = null;
-                try { force = Console.ReadLine(); } catch { }
-                if (force is null || !force.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
-                {
-                    Console.WriteLine();
-                    continue;   // 重新问
-                }
-                Console.WriteLine();
-            }
+            if (!CheckInstallTarget(candidate, srcDir)) continue;
 
-            // 路径合法性
             try
             {
                 candidate = Path.GetFullPath(candidate);
@@ -198,6 +212,50 @@ internal static class Installer
             Console.WriteLine();
             return true;
         }
+    }
+
+    /// <summary>
+    /// 检查一个候选安装目录是否可用。有已知问题就打印说明并让用户确认；
+    /// 用户拒绝则返回 false（调用方重新询问）。
+    /// </summary>
+    private static bool CheckInstallTarget(string candidate, string srcDir)
+    {
+        // 与安装源重叠 → 直接拒绝，不给"坚持要用"的选项。
+        // 这种情况会先删掉源文件再报错，属于必然失败且会损坏安装包。
+        if (PathsOverlap(candidate, srcDir))
+        {
+            Console.WriteLine();
+            Console.WriteLine("  ┌────────────────────────────────────────────────────────────┐");
+            Console.WriteLine("  │  这个位置不能用                                            │");
+            Console.WriteLine("  └────────────────────────────────────────────────────────────┘");
+            Console.WriteLine();
+            Console.WriteLine("  它和安装包所在目录重叠，安装时会先清空该目录，");
+            Console.WriteLine("  导致安装包自己的文件被删掉，安装必然失败。");
+            Console.WriteLine();
+            Console.WriteLine($"    安装包目录：{srcDir}");
+            Console.WriteLine($"    你选择的是：{candidate}");
+            Console.WriteLine();
+            Console.WriteLine("  请换一个与安装包目录无关的位置，或直接把安装包解压到别处再运行。");
+            Console.WriteLine();
+            return false;
+        }
+
+        string? problem = ExplainBadLocation(candidate);
+        if (problem is null) return true;
+
+        Console.WriteLine();
+        Console.WriteLine("  ┌────────────────────────────────────────────────────────────┐");
+        Console.WriteLine("  │  不建议安装到这个位置                                      │");
+        Console.WriteLine("  └────────────────────────────────────────────────────────────┘");
+        Console.WriteLine();
+        foreach (string line in problem.Split('\n'))
+            Console.WriteLine("  " + line);
+        Console.WriteLine();
+        Console.Write("  仍要装到这里吗？(y/N) ");
+        string? force = null;
+        try { force = Console.ReadLine(); } catch { }
+        Console.WriteLine();
+        return force is not null && force.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -582,6 +640,22 @@ internal static class Installer
     /// </summary>
     private static void CopyTree(string from, string to)
     {
+        // 安全护栏：源目录与目标目录重叠时**必须拒绝**，不能继续。
+        //
+        // 实测过的灾难场景：安装包解压在 C:\ScreenTime\_setup，而默认安装目录是
+        // C:\ScreenTime —— 两者重叠。CopyTree 会把 C:\ScreenTime 当作"旧版本目录"，
+        // 先删掉其中不在待复制清单里的文件，而清单正是从
+        // C:\ScreenTime\_setup\app 读出来的……结果是**安装程序删掉了自己的源文件**，
+        // 随后报 "Could not find file ...dll"，安装失败且源文件也没了。
+        if (PathsOverlap(from, to))
+        {
+            throw new InvalidOperationException(
+                "安装源目录与安装目录重叠，无法安全复制。\n" +
+                $"  源目录  ：{from}\n" +
+                $"  安装目录：{to}\n" +
+                "请把压缩包解压到与安装目录无关的位置，或换一个安装目录。");
+        }
+
         Directory.CreateDirectory(to);
 
         // 新版本会提供哪些文件（相对路径）
@@ -618,6 +692,25 @@ internal static class Installer
             copied++;
         }
         Console.WriteLine($"        已复制 {copied} 个文件（覆盖升级）");
+    }
+
+    /// <summary>
+    /// 两个目录是否重叠（一个是另一个的父/子目录，或就是同一个）。
+    /// 一律用 FullName 比较，顺带处理 C:\a 与 C:\a\ 这种写法差异。
+    /// </summary>
+    private static bool PathsOverlap(string a, string b)
+    {
+        try
+        {
+            string pa = Path.GetFullPath(a).TrimEnd('\\') + "\\";
+            string pb = Path.GetFullPath(b).TrimEnd('\\') + "\\";
+            return pa.StartsWith(pb, StringComparison.OrdinalIgnoreCase)
+                || pb.StartsWith(pa, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>该相对路径是否属于用户数据（升级时必须原样保留）。</summary>

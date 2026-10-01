@@ -41,10 +41,10 @@ Windows 的**强制完整性控制**会给「桌面」目录打上 `Mandatory La
 
 | 内容 | 位置 |
 |---|---|
-| 程序 | `%USERPROFILE%\ScreenTimeApp\` |
+| 程序 | `C:\ScreenTime\` |
 | 数据 | `%LOCALAPPDATA%\ScreenTime\` |
 
-> 旧版本可能装在 `%LOCALAPPDATA%\ScreenTimeApp\`。
+> 旧版本可能装在 `%USERPROFILE%\ScreenTimeApp\`（曾短暂用过 `ScreenTimeApp` 这个名字）；安装程序会自动识别并就地升级，不会装成两份。
 > 安装程序会**优先沿用已存在的那个位置**，不会装成两份。
 
 ---
@@ -128,7 +128,7 @@ Windows 的**强制完整性控制**会给「桌面」目录打上 `Mandatory La
 
 1. **开始菜单** → `屏幕使用时间` → `卸载 屏幕使用时间`
 2. 桌面快捷方式右键 → 打开文件所在位置 → 双击 `卸载.exe`
-3. 直接去安装目录（`%USERPROFILE%\ScreenTimeApp\`）双击 `卸载.exe`
+3. 直接去安装目录（`C:\ScreenTime\`）双击 `卸载.exe`
 
 卸载程序会先**扫描并列出**它找到的所有痕迹，你确认后才动手：
 

@@ -15,7 +15,7 @@ param(
     [string]$DistDir  = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist'),
     # 必须放在**没有低完整性标签**的目录。桌面被打了标签，所以不能放桌面。
     # 这个位置与当前已部署的路径保持一致。
-    [string]$InstallDir = "$env:USERPROFILE\ScreenTimeApp"
+    [string]$InstallDir = "C:\ScreenTime"
 )
 
 $ErrorActionPreference = 'Stop'
