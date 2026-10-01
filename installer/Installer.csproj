@@ -11,19 +11,9 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <LangVersion>12</LangVersion>
 
-    <!--
-      两个安装程序项目在同一目录 installer\ 下，必须各用各的中间目录，
-      否则它们的 singlefilehost.exe 会互相抢占，
-      表现为随机的 "请求的操作无法在使用用户映射区域打开的文件上执行"（文件被占用）。
-
-      关键：中间目录必须放到**项目目录之外**。
-      SDK 只会自动排除「项目目录下的 obj\」，一旦把 BaseIntermediateOutputPath
-      指到别处（哪怕是 installer\obj\Installer\），生成的 AssemblyInfo.cs
-      就会被当成源码再编译一遍，报一堆 "特性重复"（CS0579）。
-      放到仓库根的 .obj\ 下既避开了默认排除逻辑，又天然不在源码树里。
-    -->
-    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\.obj\Installer\</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(MSBuildThisFileDirectory)..\.obj\Installer-bin\</BaseOutputPath>
+    <!-- 中间目录/输出目录在 Directory.Build.props 里统一设置。
+         那两个属性必须在 Microsoft.Common.props 导入之前赋值，
+         写在 .csproj 里能工作但会触发 MSB3539 警告。 -->
 
     <!-- 与主程序一致：自包含、单文件，朋友那边无需装 .NET -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

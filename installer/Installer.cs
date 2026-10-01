@@ -12,6 +12,7 @@
 //   这是用户自己的目录，无需管理员权限，且没有低完整性标签。
 //   两者都可行，实际沿用已存在的那个，避免升级时装成两份。
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -68,6 +69,186 @@ internal static class Installer
     /// <summary>本次是否由"请求提权重启"而来（避免重复询问）。</summary>
     private static bool _elevated;
 
+    /// <summary>调用方是否已用 --dir 明确指定了安装目录。</summary>
+    private static bool _dirSpecified;
+
+    // ================= 安装目录选择 =================
+
+    /// <summary>
+    /// "按任意键继续"。
+    ///
+    /// 输入被重定向时（自动化测试、管道）Console.ReadKey 会抛异常，
+    /// 这里统一兜住，避免因此中断流程。
+    /// </summary>
+    private static void PauseKey()
+    {
+        if (Console.IsInputRedirected) return;
+        Console.Write("  按任意键继续 ...");
+        try { Console.ReadKey(true); } catch { }
+        Console.WriteLine();
+        Console.WriteLine();
+    }
+
+    /// <summary>
+    /// 安装程序若在桌面上运行，先给出明确提示。
+    ///
+    /// 桌面带 Mandatory Label\Low 且强制子项继承，所以放在桌面上的
+    /// 安装程序本身就是低完整性进程，什么都做不了。
+    /// 这里只提示不阻断——真正拦住错误的是后面的完整性检查。
+    /// </summary>
+    private static void WarnIfRunningFromDesktop(string baseDir)
+    {
+        try
+        {
+            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            if (string.IsNullOrEmpty(desktop)) return;
+
+            string d = Path.GetFullPath(desktop).TrimEnd('\\');
+            string b = Path.GetFullPath(baseDir).TrimEnd('\\');
+            if (!b.Equals(d, StringComparison.OrdinalIgnoreCase) &&
+                !b.StartsWith(d + "\\", StringComparison.OrdinalIgnoreCase)) return;
+
+            Console.WriteLine("  ┌────────────────────────────────────────────────────────────┐");
+            Console.WriteLine("  │  提示：安装程序正在【桌面】上运行                          │");
+            Console.WriteLine("  └────────────────────────────────────────────────────────────┘");
+            Console.WriteLine();
+            Console.WriteLine("  桌面目录带「低完整性」标签并强制子项继承，从桌面运行的安装程序");
+            Console.WriteLine("  会被 Windows 降级，通常无法完成安装。");
+            Console.WriteLine();
+            Console.WriteLine("  推荐做法：改双击「双击这里安装.cmd」，它会自动把文件挪到");
+            Console.WriteLine("  临时目录再安装，不受这个问题影响。");
+            Console.WriteLine();
+            Console.WriteLine("  或把压缩包解压到桌面以外（例如 C:\\ScreenTime\\）再运行本程序。");
+            Console.WriteLine();
+            PauseKey();
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 询问安装目录。
+    ///
+    /// 默认值就是推荐位置，直接回车即可——绝大多数人不需要改。
+    /// 但允许自定义，并且在用户选了"桌面"这种**装上去会出问题**的位置时
+    /// 明确拦截：桌面带低完整性标签，从那里运行的程序会被降级，
+    /// 托盘图标注册不上、数据也写不进 %LOCALAPPDATA%。
+    /// </summary>
+    private static bool PromptInstallDir()
+    {
+        while (true)
+        {
+            Console.WriteLine("  安装位置：");
+            Console.WriteLine($"    {InstallDir}");
+            Console.WriteLine();
+            Console.WriteLine("  直接回车使用上面的位置，或输入其它路径。");
+            Console.WriteLine("  【注意】不要把程序装到桌面上（原因见下）。");
+            Console.WriteLine();
+            Console.Write("  安装到（回车 = 默认）：");
+            string? input = null;
+            try { input = Console.ReadLine(); } catch { }
+
+            if (input is null) return true;             // 无交互环境：用默认值
+            input = input.Trim().Trim('"');
+            if (input.Length == 0) return true;         // 回车：用默认值
+
+            string candidate = input;
+
+            // 只给了盘符或末尾是冒号/反斜杠时，补上默认文件夹名
+            if (candidate.EndsWith(":") || candidate.EndsWith(":\\") || candidate.EndsWith(":/"))
+                candidate = Path.Combine(candidate, AppFolderName);
+
+            string? problem = ExplainBadLocation(candidate);
+            if (problem is not null)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  ┌────────────────────────────────────────────────────────────┐");
+                Console.WriteLine("  │  不建议安装到这个位置                                      │");
+                Console.WriteLine("  └────────────────────────────────────────────────────────────┘");
+                Console.WriteLine();
+                foreach (string line in problem.Split('\n'))
+                    Console.WriteLine("  " + line);
+                Console.WriteLine();
+                Console.Write("  仍要装到这里吗？(y/N) ");
+                string? force = null;
+                try { force = Console.ReadLine(); } catch { }
+                if (force is null || !force.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine();
+                    continue;   // 重新问
+                }
+                Console.WriteLine();
+            }
+
+            // 路径合法性
+            try
+            {
+                candidate = Path.GetFullPath(candidate);
+            }
+            catch
+            {
+                Console.WriteLine();
+                Console.WriteLine("  [错误] 这不是一个有效的路径，请重新输入。");
+                Console.WriteLine();
+                continue;
+            }
+
+            InstallDir = candidate;
+            Console.WriteLine();
+            Console.WriteLine($"  将安装到：{InstallDir}");
+            Console.WriteLine();
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 判断某个安装位置是否有已知问题，返回给用户看的说明；没问题则返回 null。
+    ///
+    /// 核心判据是**桌面**：桌面目录带 Mandatory Label\Low，
+    /// 从那里启动的进程会被 Windows 降级为低完整性，直接后果是
+    /// 托盘图标注册失败（Shell_NotifyIcon 拒绝访问）、数据写不进 %LOCALAPPDATA%。
+    /// </summary>
+    private static string? ExplainBadLocation(string dir)
+    {
+        string full;
+        try { full = Path.GetFullPath(dir); }
+        catch { return null; }
+
+        var reasons = new List<string>();
+
+        // 桌面（含子目录）
+        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        if (!string.IsNullOrEmpty(desktop))
+        {
+            string d = Path.GetFullPath(desktop).TrimEnd('\\');
+            if (full.Equals(d, StringComparison.OrdinalIgnoreCase) ||
+                full.StartsWith(d + "\\", StringComparison.OrdinalIgnoreCase))
+            {
+                reasons.Add("桌面目录带「低完整性」标签，而且会强制子项继承。");
+                reasons.Add("装在这里的程序一启动就会被 Windows 降级，后果是：");
+                reasons.Add("  · 托盘图标注册不上（点关闭后程序就找不回来了）");
+                reasons.Add("  · 用不了 %LOCALAPPDATA%，数据只能降级存到安装目录里");
+                reasons.Add("");
+                reasons.Add("建议改用：");
+                reasons.Add($"  {Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), AppFolderName)}");
+                reasons.Add("  C:\\" + AppFolderName);
+            }
+        }
+
+        // 压缩包/临时目录：装完可能被清理掉
+        string temp = Path.GetTempPath().TrimEnd('\\');
+        if (full.StartsWith(temp + "\\", StringComparison.OrdinalIgnoreCase))
+            reasons.Add("这是临时目录，系统或清理软件可能把它删掉，程序会突然消失。");
+
+        // 系统盘根以外的可移动盘不做判断（无法可靠识别），
+        // 但 Program Files 需要管理员权限，值得一提。
+        string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        if (!string.IsNullOrEmpty(pf) &&
+            full.StartsWith(Path.GetFullPath(pf).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
+            reasons.Add("Program Files 需要管理员权限才能写入，安装和以后的升级都会弹出 UAC。");
+
+        return reasons.Count == 0 ? null : string.Join("\n", reasons);
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -80,7 +261,7 @@ internal static class Installer
         //   --elevated     标记"本次是提权后重启的"，避免重复询问
         for (int i = 0; i < args.Length; i++)
         {
-            if (args[i] is "--dir" && i + 1 < args.Length) InstallDir = args[++i];
+            if (args[i] is "--dir" && i + 1 < args.Length) { InstallDir = args[++i]; _dirSpecified = true; }
             else if (args[i] is "--dry-run") _dryRun = true;
             else if (args[i] is "--elevated") _elevated = true;
         }
@@ -89,6 +270,11 @@ internal static class Installer
 
         string baseDir = AppContext.BaseDirectory.TrimEnd('\\');
         string payload = Path.Combine(baseDir, "app");
+
+        // 如果安装程序自己就在桌面上，先说明白会发生什么。
+        // 这是最常见的失败场景，与其等用户撞上 Access denied 再解释，
+        // 不如一开始就讲清楚。
+        WarnIfRunningFromDesktop(baseDir);
 
         // ---------- 定位程序文件 ----------
         if (!File.Exists(Path.Combine(payload, ExeName)))
@@ -101,6 +287,12 @@ internal static class Installer
                      "请确认压缩包已完整解压，且 app 子文件夹与本安装程序在一起。");
                 return 1;
             }
+        }
+
+        // ---------- 选择安装目录 ----------
+        if (!_dirSpecified && !_dryRun)
+        {
+            if (!PromptInstallDir()) return 1;   // 用户取消
         }
 
         Console.WriteLine($"  程序文件：{payload}");

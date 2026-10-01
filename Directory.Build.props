@@ -19,4 +19,22 @@
     <!-- 关键：源文件以 UTF-8 读取，避免中文注释/字符串乱码 -->
     <CodePage>65001</CodePage>
   </PropertyGroup>
+
+  <!--
+    安装程序与卸载程序放在同一个目录 installer\ 下，必须各用各的中间目录，
+    否则它们的 singlefilehost.exe 会互相抢占，报随机的
+    "请求的操作无法在使用用户映射区域打开的文件上执行"（文件被占用）。
+
+    两个约束：
+      1. 中间目录要放在**项目目录之外**。SDK 只自动排除「项目目录下的 obj\」；
+         把 BaseIntermediateOutputPath 指到 installer\obj\ 里面，生成的
+         AssemblyInfo.cs 会被当成源码再编译一遍，报一堆"特性重复"（CS0579）。
+      2. 这两个属性必须在 **Microsoft.Common.props 导入之前**设置，
+         所以只能写在 Directory.Build.props 里——写在各自的 .csproj 里
+         虽然也能工作，但 MSBuild 会警告 MSB3539（属性设置得太晚）。
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Installer' Or '$(MSBuildProjectName)' == 'Uninstaller'">
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory).obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory).obj\$(MSBuildProjectName)-bin\</BaseOutputPath>
+  </PropertyGroup>
 </Project>

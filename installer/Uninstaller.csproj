@@ -11,10 +11,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <LangVersion>12</LangVersion>
 
-    <!-- 与 Installer.csproj 分开的中间目录，避免两者抢占 singlefilehost.exe。
-         必须放在项目目录之外，理由见 Installer.csproj 里的说明。 -->
-    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\.obj\Uninstaller\</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(MSBuildThisFileDirectory)..\.obj\Uninstaller-bin\</BaseOutputPath>
+    <!-- 中间目录/输出目录在 Directory.Build.props 里统一设置 -->
 
     <!-- 与主程序一致：自包含、单文件，无需装 .NET -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
