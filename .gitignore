@@ -1,0 +1,61 @@
+# ============================================================
+#  屏幕使用时间 (ScreenTime) - Git 忽略规则
+# ============================================================
+
+# ---- 构建产物 ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# ---- 发布产物与安装包（体积大，且可由源码重新生成）----
+dist/
+package/
+installer/bin/
+installer/obj/
+
+# ---- 本地 NuGet 缓存与工具目录 ----
+.nugetpackages/
+.dotnethome/
+.appdata/
+.restoretest/
+.tools/
+
+# ---- 本地测试数据与临时目录 ----
+.selftest/
+.appdata-test/
+.demodata/
+.rangetest/
+.rt/
+.rt2/
+.installtest/
+.uptest/
+.installer-build/
+.fmttest/
+.iconprobe/
+.packtest/
+.wpftest/
+.it3/
+.it4/
+.it5/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# ---- 运行期产生的文件 ----
+crash.log
+takeover.request
+tray-status.txt
+settings.json
+screentime-boot.log
+
+# ---- 操作系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 编辑器 ----
+.idea/
+*.swp

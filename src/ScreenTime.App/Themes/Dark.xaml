@@ -1,0 +1,37 @@
+<!--
+  深色主题。与 Themes/Light.xaml 的 key 完全一致，只换取值，
+  这样运行时替换整个字典即可完成切换。
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <SolidColorBrush x:Key="BgBrush"           Color="#16181D"/>
+    <SolidColorBrush x:Key="SurfaceBrush"      Color="#1E2127"/>
+    <SolidColorBrush x:Key="Surface2Brush"     Color="#23262D"/>
+    <SolidColorBrush x:Key="Surface3Brush"     Color="#2A2E36"/>
+    <SolidColorBrush x:Key="BorderBrush"       Color="#2E323B"/>
+    <SolidColorBrush x:Key="BorderStrongBrush" Color="#3C414C"/>
+
+    <SolidColorBrush x:Key="TextBrush"  Color="#E8EAEE"/>
+    <SolidColorBrush x:Key="Text2Brush" Color="#A2A8B4"/>
+    <SolidColorBrush x:Key="Text3Brush" Color="#717885"/>
+
+    <SolidColorBrush x:Key="AccentBrush" Color="#5B8CFF"/>
+    <SolidColorBrush x:Key="UpBrush"     Color="#FF7A72"/>
+    <SolidColorBrush x:Key="DownBrush"   Color="#4ECF97"/>
+
+    <SolidColorBrush x:Key="StateActiveBrush" Color="#4B8FF7"/>
+    <SolidColorBrush x:Key="StateIdleBrush"   Color="#4A505C"/>
+    <SolidColorBrush x:Key="StateLockedBrush" Color="#6A7381"/>
+    <SolidColorBrush x:Key="StateOffBrush"    Color="#333842"/>
+
+    <LinearGradientBrush x:Key="HeroBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#2563EB" Offset="0"/>
+        <GradientStop Color="#7C3AED" Offset="1"/>
+    </LinearGradientBrush>
+
+    <SolidColorBrush x:Key="HeroTextBrush"     Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="HeroTextDimBrush"  Color="#C9D6FF"/>
+    <SolidColorBrush x:Key="HeroBadgeBrush"    Color="#40FFFFFF"/>
+
+</ResourceDictionary>

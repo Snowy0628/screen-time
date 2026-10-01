@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>屏幕使用时间 · UI 视觉原型</title>
+<style>
+/* ============================================================
+   设计令牌 (Design Tokens)
+   深色/浅色两套，用 [data-theme] 切换；auto 模式跟随系统
+   ============================================================ */
+:root{
+  --bg:            #f4f5f7;
+  --surface:       #ffffff;
+  --surface-2:     #fafbfc;
+  --surface-3:     #f0f1f4;
+  --border:        #e4e6ea;
+  --border-strong: #d3d6dc;
+  --text:          #1b1d21;
+  --text-2:        #5b6069;
+  --text-3:        #8b9099;
+  --shadow-sm:     0 1px 2px rgba(16,18,22,.06), 0 1px 3px rgba(16,18,22,.04);
+  --shadow-md:     0 2px 6px rgba(16,18,22,.07), 0 8px 24px rgba(16,18,22,.06);
+  --shadow-lg:     0 8px 20px rgba(16,18,22,.10), 0 24px 48px rgba(16,18,22,.10);
+  --accent:        #2563eb;
+  --accent-soft:   #eaf0fe;
+  --up:            #d9534f;
+  --down:          #2e9e6b;
+  --grid:          #eceef2;
+
+  /* 状态色：使用 / 空闲 / 锁屏 / 熄屏睡眠 */
+  --st-active:     #3b82f6;
+  --st-idle:       #c3c8d1;
+  --st-locked:     #8b93a3;
+  --st-off:        #d7dae0;
+
+  --radius-lg: 16px;
+  --radius-md: 11px;
+  --radius-sm: 7px;
+  --tl-h: 34px;
+}
+[data-theme="dark"]{
+  --bg:            #16181d;
+  --surface:       #1e2127;
+  --surface-2:     #23262d;
+  --surface-3:     #2a2e36;
+  --border:        #2e323b;
+  --border-strong: #3c414c;
+  --text:          #e8eaee;
+  --text-2:        #a2a8b4;
+  --text-3:        #717885;
+  --shadow-sm:     0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:     0 2px 6px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.35);
+  --shadow-lg:     0 8px 20px rgba(0,0,0,.5), 0 24px 48px rgba(0,0,0,.45);
+  --accent:        #5b8cff;
+  --accent-soft:   #1e2a45;
+  --up:            #ff7a72;
+  --down:          #4ecf97;
+  --grid:          #2a2e36;
+
+  --st-active:     #4b8ff7;
+  --st-idle:       #4a505c;
+  --st-locked:     #6a7381;
+  --st-off:        #333842;
+}
+@media (prefers-color-scheme: dark){
+  html[data-theme="auto"]{
+    --bg:#16181d; --surface:#1e2127; --surface-2:#23262d; --surface-3:#2a2e36;
+    --border:#2e323b; --border-strong:#3c414c; --text:#e8eaee; --text-2:#a2a8b4; --text-3:#717885;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+    --shadow-md:0 2px 6px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lg:0 8px 20px rgba(0,0,0,.5), 0 24px 48px rgba(0,0,0,.45);
+    --accent:#5b8cff; --accent-soft:#1e2a45; --up:#ff7a72; --down:#4ecf97; --grid:#2a2e36;
+    --st-active:#4b8ff7; --st-idle:#4a505c; --st-locked:#6a7381; --st-off:#333842;
+  }
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font:14px/1.5 "Microsoft YaHei UI","Microsoft YaHei",-apple-system,"Segoe UI",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding:22px 26px 40px;
+  transition:background .22s ease,color .22s ease;
+}
+.wrap{max-width:1180px;margin:0 auto}
+
+/* ================= 顶栏 ================= */
+.topbar{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto}
+.brand .logo{
+  width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+  background:linear-gradient(140deg,var(--accent),#7c3aed);color:#fff;box-shadow:var(--shadow-sm);
+}
+.brand h1{font-size:15.5px;font-weight:600;letter-spacing:.2px}
+.brand .sub{font-size:11.5px;color:var(--text-3);margin-top:-1px}
+
+.live{
+  display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);
+  background:var(--surface);border:1px solid var(--border);border-radius:999px;
+  padding:5px 12px 5px 10px;box-shadow:var(--shadow-sm);
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--down);position:relative}
+.dot::after{content:"";position:absolute;inset:-3px;border-radius:50%;background:var(--down);opacity:.28;animation:pulse 2s ease-out infinite}
+@keyframes pulse{0%{transform:scale(.5);opacity:.5}100%{transform:scale(1.9);opacity:0}}
+
+.seg{display:flex;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:3px;box-shadow:var(--shadow-sm)}
+.seg button{
+  border:0;background:transparent;color:var(--text-2);cursor:pointer;
+  font:inherit;font-size:12.5px;padding:5px 14px;border-radius:7px;transition:.15s;
+}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:var(--accent);color:#fff;box-shadow:var(--shadow-sm)}
+
+.ibtn{
+  width:34px;height:34px;border-radius:9px;border:1px solid var(--border);
+  background:var(--surface);color:var(--text-2);cursor:pointer;display:grid;place-items:center;
+  box-shadow:var(--shadow-sm);transition:.15s;
+}
+.ibtn:hover{border-color:var(--border-strong);color:var(--text)}
+.ibtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+
+/* ================= 卡片 ================= */
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-sm);padding:18px 20px;margin-bottom:16px;
+}
+.card-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.card-head h2{font-size:13.5px;font-weight:600;letter-spacing:.2px}
+.card-head .hint{font-size:11.5px;color:var(--text-3);margin-left:auto}
+
+/* ================= 日期导航 ================= */
+.datenav{display:flex;align-items:center;gap:8px}
+.datenav .cur{
+  font-size:13.5px;font-weight:600;min-width:150px;text-align:center;
+  padding:5px 10px;border-radius:8px;background:var(--surface-3);
+}
+.datenav .cur small{font-weight:400;color:var(--text-3);font-size:11.5px;margin-left:6px}
+.navbtn{
+  width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface);
+  cursor:pointer;color:var(--text-2);display:grid;place-items:center;transition:.15s;
+}
+.navbtn:hover{background:var(--surface-3);color:var(--text)}
+.navbtn:disabled{opacity:.35;cursor:not-allowed}
+
+/* ================= 概览数字 ================= */
+.overview{display:grid;grid-template-columns:1.55fr 1fr 1fr 1fr;gap:14px;margin-bottom:16px}
+@media(max-width:1000px){.overview{grid-template-columns:1fr 1fr}}
+.kpi{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:16px 18px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;
+}
+.kpi .lab{font-size:11.5px;color:var(--text-3);display:flex;align-items:center;gap:5px;margin-bottom:6px}
+.kpi .val{font-size:29px;font-weight:650;letter-spacing:-.5px;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpi .val .u{font-size:13px;font-weight:500;color:var(--text-3);margin-left:2px;letter-spacing:0}
+.kpi .foot{font-size:11.5px;color:var(--text-3);margin-top:7px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.kpi.hero{background:linear-gradient(135deg,var(--accent) 0%,#7c3aed 100%);border-color:transparent;color:#fff}
+.kpi.hero .lab,.kpi.hero .foot{color:rgba(255,255,255,.82)}
+.kpi.hero .val .u{color:rgba(255,255,255,.75)}
+.badge{
+  display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:600;
+  padding:2px 7px;border-radius:6px;font-variant-numeric:tabular-nums;
+}
+.badge.up{color:var(--up);background:color-mix(in srgb,var(--up) 12%,transparent)}
+.badge.down{color:var(--down);background:color-mix(in srgb,var(--down) 12%,transparent)}
+.kpi.hero .badge{background:rgba(255,255,255,.2);color:#fff}
+
+/* ================= 24H 时间轴 ================= */
+.tl-scale{position:relative;height:15px;margin:2px 0 4px}
+.tl-scale span{position:absolute;transform:translateX(-50%);font-size:10.5px;color:var(--text-3)}
+.tl-scale span:first-child{transform:none}
+.tl-scale span:last-child{transform:translateX(-100%)}
+
+.tl{position:relative;height:var(--tl-h);border-radius:9px;overflow:hidden;background:var(--surface-3);display:flex;box-shadow:inset 0 0 0 1px var(--border)}
+.tl .seg-s{height:100%;position:relative;transition:filter .15s}
+.tl .seg-s:hover{filter:brightness(1.12) saturate(1.15);z-index:3}
+.tl-hour{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.55);pointer-events:none}
+[data-theme="dark"] .tl-hour{background:rgba(0,0,0,.4)}
+.tl-icons{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:100%;pointer-events:none;z-index:4}
+
+.tl-legend{display:flex;gap:16px;margin-top:11px;flex-wrap:wrap;align-items:center}
+.lg{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2)}
+.lg i{width:10px;height:10px;border-radius:3px;display:block}
+
+/* ================= 分时柱状图 ================= */
+/* 22px 顶部留白：给柱顶的应用图标占位，柱身最高不越界 */
+.chart{position:relative;height:288px;padding-top:22px;display:flex;align-items:flex-end;gap:3px;margin-top:4px}
+.barwrap{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:stretch;position:relative;min-width:0;cursor:pointer}.barwrap:hover .barbody{filter:brightness(1.1)}
+.barbody{
+  width:100%;border-radius:4px 4px 2px 2px;overflow:hidden;display:flex;flex-direction:column;
+  transition:height .5s cubic-bezier(.22,1,.36,1), filter .15s;position:relative;box-shadow:var(--shadow-sm);
+}
+.barbody .slice{position:relative;transition:filter .15s;flex-shrink:0}
+.barbody .slice::after{content:"";position:absolute;inset:0;border-bottom:1px solid rgba(255,255,255,.4)}
+.barbody .slice:last-child::after{border-bottom:0}
+/* 柱顶图标：贴着柱身顶端，随柱高动画移动；按该小时时长排序，最多 3 个 */
+.barapp{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);z-index:5;pointer-events:none;
+  height:19px;display:flex;align-items:center;padding-bottom:2px}
+.barapp .ico{box-shadow:0 0 0 1.5px var(--surface);position:relative}
+.barapp .ico + .ico{margin-left:-5px}
+.barapp .more{font-size:9.5px;color:var(--text-3);margin-left:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.hourlab{display:flex;gap:3px;margin-top:7px}
+.hourlab span{flex:1;text-align:center;font-size:10px;color:var(--text-3);min-width:0}
+.hourlab span:nth-child(even){visibility:hidden}
+@media(max-width:900px){.hourlab span:nth-child(odd){visibility:hidden}.hourlab span:nth-child(even){visibility:visible}}
+.baseline{position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--border)}
+.ylab{position:absolute;left:-2px;font-size:10px;color:var(--text-3);transform:translateY(50%);pointer-events:none}
+
+/* 图标（纯 SVG 绘制，无外部依赖） */
+.ico{display:block;border-radius:4.5px;flex-shrink:0}
+.ico-wrap{filter:drop-shadow(0 1px 2px rgba(0,0,0,.22))}
+.ico-shadow-around{box-shadow:0 0 0 1.5px var(--surface)}
+
+/* ================= 排行榜 ================= */
+.rank{display:flex;flex-direction:column;gap:2px}
+.row{
+  display:grid;grid-template-columns:26px 30px 1fr 76px 62px 96px;gap:12px;align-items:center;
+  padding:9px 10px;border-radius:10px;transition:background .14s;
+}
+.row:hover{background:var(--surface-3)}
+.row.head{
+  font-size:11px;color:var(--text-3);padding:2px 10px 7px;border-bottom:1px solid var(--border);
+  border-radius:0;margin-bottom:4px;
+}
+.row.head:hover{background:transparent}
+.rk{font-size:12.5px;color:var(--text-3);font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
+.rk.top1{color:#e0a30b}.rk.top2{color:#96a0ad}.rk.top3{color:#c08457}
+.nm{min-width:0}
+.nm .t1{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm .t2{font-size:10.5px;color:var(--text-3);margin-top:1px}
+.dur{font-size:13px;font-variant-numeric:tabular-nums;text-align:right;font-weight:500}
+.share{font-size:11.5px;color:var(--text-2);text-align:right;font-variant-numeric:tabular-nums}
+.track{height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden}
+.track i{display:block;height:100%;border-radius:3px;transition:width .6s cubic-bezier(.22,1,.36,1)}
+.delta{font-size:11.5px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-3)}
+
+/* ================= 洞察卡（可折叠，收进二级面板） ================= */
+details.fold{margin-top:2px}
+details.fold > summary{
+  list-style:none;cursor:pointer;display:flex;align-items:center;gap:9px;user-select:none;
+  padding:3px 0;border-radius:9px;
+}
+details.fold > summary::-webkit-details-marker{display:none}
+details.fold > summary h2{font-size:13.5px;font-weight:600;letter-spacing:.2px}
+details.fold > summary .chev{
+  width:15px;height:15px;color:var(--text-3);transition:transform .22s cubic-bezier(.22,1,.36,1);flex-shrink:0;
+}
+details.fold[open] > summary .chev{transform:rotate(90deg)}
+details.fold > summary:hover h2{color:var(--accent)}
+details.fold > summary .hint{font-size:11.5px;color:var(--text-3);margin-left:auto}
+details.fold[open] > .insights{margin-top:13px;animation:foldin .26s cubic-bezier(.22,1,.36,1)}
+@keyframes foldin{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+
+.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:900px){.insights{grid-template-columns:1fr}}
+.ins{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-md);padding:13px 15px}
+.ins .k{font-size:11.5px;color:var(--text-3);margin-bottom:5px}
+.ins .v{font-size:17px;font-weight:600;letter-spacing:-.2px}
+.ins .d{font-size:11.5px;color:var(--text-2);margin-top:4px;line-height:1.45}
+
+/* ================= 周 / 月 ================= */
+.weekbars{display:flex;gap:10px;align-items:flex-end;height:190px;margin-top:6px}
+.wb{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:7px;height:100%;cursor:pointer}
+.wb .stem{width:100%;border-radius:7px 7px 3px 3px;background:linear-gradient(180deg,var(--accent),color-mix(in srgb,var(--accent) 62%,#7c3aed));transition:height .55s cubic-bezier(.22,1,.36,1),filter .15s;position:relative;min-height:3px}
+.wb:hover .stem{filter:brightness(1.12)}
+.wb .stem.today{box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--accent)}
+.wb .cap{font-size:11px;color:var(--text-3);white-space:nowrap}
+.wb .cap b{color:var(--text);font-weight:600}
+.wb .amt{font-size:10.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+.heat{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.heat .hd{font-size:10.5px;color:var(--text-3);text-align:center;padding-bottom:3px}
+.heat .cell{
+  aspect-ratio:1/1;border-radius:8px;background:var(--surface-3);position:relative;
+  display:grid;place-items:center;font-size:11px;color:var(--text-3);cursor:pointer;
+  transition:transform .14s,box-shadow .14s;font-variant-numeric:tabular-nums;
+}
+.heat .cell:hover{transform:scale(1.06);box-shadow:var(--shadow-md);z-index:2}
+.heat .cell.lv0{background:var(--surface-3)}
+.heat .cell.blank{background:transparent;cursor:default}
+.heat .cell.blank:hover{transform:none;box-shadow:none}
+.heat .cell b{font-size:10px;font-weight:600;position:absolute;bottom:4px;right:5px;opacity:.75}
+.heatleg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);margin-top:12px;justify-content:flex-end}
+.heatleg i{width:12px;height:12px;border-radius:4px;display:block}
+
+/* ================= 设置抽屉 ================= */
+.scrim{position:fixed;inset:0;background:rgba(12,14,18,.34);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .22s;z-index:40}
+.scrim.show{opacity:1;pointer-events:auto}
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:376px;max-width:92vw;background:var(--surface);
+  border-left:1px solid var(--border);box-shadow:var(--shadow-lg);z-index:41;
+  transform:translateX(102%);transition:transform .28s cubic-bezier(.22,1,.36,1);
+  display:flex;flex-direction:column;
+}
+.drawer.show{transform:none}
+.drawer .dh{display:flex;align-items:center;padding:17px 20px;border-bottom:1px solid var(--border)}
+.drawer .dh h3{font-size:14px;font-weight:600;margin-right:auto}
+.drawer .db{padding:8px 20px 24px;overflow:auto}
+.set{padding:15px 0;border-bottom:1px solid var(--border)}
+.set:last-child{border-bottom:0}
+.set .s1{font-size:13px;font-weight:500;margin-bottom:3px}
+.set .s2{font-size:11.5px;color:var(--text-3);line-height:1.45;margin-bottom:10px}
+.opts{display:flex;background:var(--surface-3);border-radius:9px;padding:3px;gap:3px}
+.opts button{flex:1;border:0;background:transparent;color:var(--text-2);cursor:pointer;font:inherit;font-size:12px;padding:6px 8px;border-radius:7px;transition:.15s}
+.opts button.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm);font-weight:500}
+.sw{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.sw .tk{width:38px;height:21px;border-radius:11px;background:var(--border-strong);position:relative;transition:.2s;flex-shrink:0}
+.sw .tk::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.sw.on .tk{background:var(--accent)}
+.sw.on .tk::after{transform:translateX(17px)}
+.sw .t{font-size:12.5px;color:var(--text-2)}
+
+/* ================= 悬浮提示 ================= */
+#tip{
+  position:fixed;z-index:99;pointer-events:none;opacity:0;transform:translateY(3px);
+  transition:opacity .12s,transform .12s;
+  background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;
+  box-shadow:var(--shadow-lg);padding:9px 12px;font-size:12px;max-width:260px;
+}
+#tip.show{opacity:1;transform:none}
+#tip .tt{font-weight:600;margin-bottom:3px;display:flex;align-items:center;gap:6px}
+#tip .tr{color:var(--text-2);display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+#tip .tr b{color:var(--text);font-weight:500}
+
+/* ================= 页脚说明 ================= */
+.note{
+  font-size:11.5px;color:var(--text-3);line-height:1.6;background:var(--surface-2);
+  border:1px dashed var(--border-strong);border-radius:var(--radius-md);padding:12px 15px;
+}
+.note b{color:var(--text-2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= 顶栏 ================= -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9"/><path d="M12 7.4V12l3.4 2"/>
+        </svg>
+      </div>
+      <div>
+        <h1>屏幕使用时间</h1>
+        <div class="sub">Screen Time · 本机数据，仅存本地</div>
+      </div>
+    </div>
+
+    <div class="live"><span class="dot"></span>正在记录 · <span id="liveApp">Visual Studio Code</span></div>
+
+    <div class="seg" id="tabSeg">
+      <button data-tab="day" class="on">日</button>
+      <button data-tab="week">周</button>
+      <button data-tab="month">月</button>
+    </div>
+
+    <button class="ibtn" id="themeBtn" title="切换主题（浅色 / 深色 / 跟随系统）">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>
+      </svg>
+    </button>
+    <button class="ibtn" id="setBtn" title="设置">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="3.2"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.65 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- ================= 日视图 ================= -->
+  <section id="view-day">
+
+    <div class="card-head" style="margin-bottom:14px">
+      <div class="datenav">
+        <button class="navbtn" id="prevDay" title="前一天">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div class="cur" id="dateLabel">2025年6月11日 星期三</div>
+        <button class="navbtn" id="nextDay" title="后一天">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+        <button class="navbtn" id="todayBtn" title="回到今天" style="width:auto;padding:0 10px;font-size:12px">今天</button>
+      </div>
+      <div class="hint" id="dayHint">数据来自本地采集 · 图标为原型内置绘制</div>
+    </div>
+
+    <!-- 概览 -->
+    <div class="overview">
+      <div class="kpi hero">
+        <div class="lab">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.4V12l3.4 2"/></svg>
+          屏幕前总时长
+        </div>
+        <div class="val" id="kpiTotal">8<span class="u">小时</span>42<span class="u">分</span></div>
+        <div class="foot">
+          <span id="kpiDeltaBadge" class="badge up">↑ 1小时18分</span>
+          <span>较昨天</span>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="lab">真正在使用</div>
+        <div class="val" id="kpiActive">6<span class="u">小时</span>05<span class="u">分</span></div>
+        <div class="foot">占屏幕时间 <b id="kpiActivePct" style="color:var(--text-2)">69%</b></div>
+      </div>
+      <div class="kpi">
+        <div class="lab">熄屏 / 锁屏 / 睡眠</div>
+        <div class="val" id="kpiOff">1<span class="u">小时</span>47<span class="u">分</span></div>
+        <div class="foot">今天解锁 <b style="color:var(--text-2)">23</b> 次</div>
+      </div>
+      <div class="kpi">
+        <div class="lab">最常使用</div>
+        <div class="val" id="kpiTop" style="font-size:19px;padding-top:6px">Visual Studio Code</div>
+        <div class="foot">占屏幕时间 <b id="kpiTopPct" style="color:var(--text-2)">28%</b> · 共 <b id="kpiTopCount" style="color:var(--text-2)">47</b> 个应用</div>
+      </div>
+    </div>
+
+    <!-- 24 小时时间轴 -->
+    <div class="card">
+      <div class="card-head">
+        <h2>全天时间轴</h2>
+        <span class="hint">按真实状态着色的连续记录 · 悬停查看分段</span>
+      </div>
+      <div class="tl-scale" id="tlScale"></div>
+      <div class="tl" id="tl"></div>
+      <div class="tl-legend">
+        <span class="lg"><i style="background:var(--st-active)"></i>前台使用</span>
+        <span class="lg"><i style="background:var(--st-idle)"></i>空闲（屏幕亮但无输入）</span>
+        <span class="lg"><i style="background:var(--st-locked)"></i>锁屏</span>
+        <span class="lg"><i style="background:var(--st-off)"></i>熄屏 / 睡眠</span>
+        <span class="lg" style="margin-left:auto;color:var(--text-3)">时间轴上的应用图标 = 该时段主导应用</span>
+      </div>
+    </div>
+
+    <!-- 分时柱状图 -->
+    <div class="card">
+      <div class="card-head">
+        <h2>分时应用分布</h2>
+        <span class="hint">每根柱 = 1 小时 · 柱高 = 前台使用时长 · 柱内色块 = 应用占比 · 柱顶 = 该小时时长 Top3 应用（窗口变窄自动减为 2 个）</span>
+      </div>
+      <div class="chart" id="chart">
+        <div class="baseline"></div>
+        <div class="ylab" style="bottom:100%">1h</div>
+        <div class="ylab" style="bottom:50%">30m</div>
+      </div>
+      <div class="hourlab" id="hourlab"></div>
+    </div>
+
+    <!-- 排行榜 -->
+    <div class="card">
+      <div class="card-head">
+        <h2>应用使用排行</h2>
+        <span class="hint">点击行可固定/取消对比 · 变化列对比昨天同时段</span>
+      </div>
+      <div class="rank" id="rank"></div>
+    </div>
+
+    <!-- 洞察（折叠为二级面板） -->
+    <div class="card">
+      <details class="fold" id="insFold">
+        <summary>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+          <h2>行为洞察</h2>
+          <span class="hint">最长专注 <b id="foldPeek" style="color:var(--text-2);font-weight:600">1 小时 42 分</b> · 点击展开</span>
+        </summary>
+        <div class="insights">
+          <div class="ins"><div class="k">最长连续专注</div><div class="v" id="ins1">1 小时 42 分</div><div class="d" id="ins1d">Visual Studio Code · 09:14 → 10:56</div></div>
+          <div class="ins"><div class="k">应用切换频次</div><div class="v" id="ins2">184 次</div><div class="d" id="ins2d">平均每 2 分 12 秒切换一次，比昨天更专注</div></div>
+          <div class="ins"><div class="k">时段规律</div><div class="v" id="ins3">10:00 – 12:00</div><div class="d" id="ins3d">是你最稳定的高产时段（近 7 天一致）</div></div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ================= 周视图 ================= -->
+  <section id="view-week" style="display:none">
+    <div class="card">
+      <div class="card-head"><h2>本周每天的使用时长</h2><span class="hint">含熄屏/锁屏，悬停查看当日构成</span></div>
+      <div class="weekbars" id="weekbars"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>本周应用排行</h2><span class="hint">与上周对比</span></div>
+      <div class="rank" id="rankWeek"></div>
+    </div>
+  </section>
+
+  <!-- ================= 月视图 ================= -->
+  <section id="view-month" style="display:none">
+    <div class="card">
+      <div class="card-head"><h2>2025 年 6 月 · 每日使用热力图</h2><span class="hint">颜色越深 = 当天屏幕使用时间越长</span></div>
+      <div class="heat" id="heat"></div>
+      <div class="heatleg">少 <i style="background:var(--surface-3)"></i><i style="background:color-mix(in srgb,var(--accent) 26%,var(--surface-3))"></i><i style="background:color-mix(in srgb,var(--accent) 52%,var(--surface-3))"></i><i style="background:color-mix(in srgb,var(--accent) 78%,var(--surface-3))"></i><i style="background:var(--accent)"></i> 多</div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>月度应用排行</h2><span class="hint">与上月对比</span></div>
+      <div class="rank" id="rankMonth"></div>
+    </div>
+  </section>
+
+  <div class="note">
+    <b>这是 UI 视觉原型，数据为内置模拟数据。</b>
+    目的是先确认界面结构、信息密度、配色与暗色模式表现，再据此实现 WPF 版本。
+    图中所有应用图标均由纯 SVG 绘制，因此可离线查看；正式版会改为从可执行文件提取真实图标（<code>SHGetFileInfo</code> / <code>ExtractIconEx</code>）并缓存为 PNG。
+    顶栏主题按钮与右上角设置里的「外观」是同一份状态，切到「深色」可检查暗色模式下的图标与色块对比度。
+  </div>
+</div>
+
+<!-- ================= 设置抽屉 ================= -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dh">
+    <h3>设置</h3>
+    <button class="ibtn" id="closeDrawer" style="width:28px;height:28px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="db">
+
+    <div class="set">
+      <div class="s1">外观</div>
+      <div class="s2">跟随系统时会实时响应 Windows 的浅色/深色切换，无需重启。</div>
+      <div class="opts" id="themeOpts">
+        <button data-theme-val="light">浅色</button>
+        <button data-theme-val="dark">深色</button>
+        <button data-theme-val="auto" class="on">跟随系统</button>
+      </div>
+    </div>
+
+    <div class="set">
+      <div class="s1">记录范围</div>
+      <div class="s2">默认只记录应用名称与时长，<b>不记录窗口标题</b>，数据库里不会出现文档名或网址。</div>
+      <div class="sw on" data-sw><span class="tk"></span><span class="t">记录应用名称与使用时长</span></div>
+      <div class="sw" data-sw style="margin-top:11px"><span class="tk"></span><span class="t">记录窗口标题（敏感，默认关闭）</span></div>
+    </div>
+
+    <div class="set">
+      <div class="s1">状态识别</div>
+      <div class="s2">空闲阈值：超过该时长无键鼠输入即判为空闲，不计入"真正在使用"。</div>
+      <div class="opts" id="idleOpts">
+        <button data-idle="30">30 秒</button>
+        <button data-idle="60" class="on">1 分钟</button>
+        <button data-idle="120">2 分钟</button>
+        <button data-idle="300">5 分钟</button>
+      </div>
+      <div class="sw on" data-sw style="margin-top:12px"><span class="tk"></span><span class="t">统计熄屏 / 锁屏 / 睡眠时长</span></div>
+    </div>
+
+    <div class="set">
+      <div class="s1">应用排除列表</div>
+      <div class="s2">列表内的应用不会被记录。当前已排除 3 项。</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span class="badge" style="background:var(--surface-3);color:var(--text-2)">1Password ×</span>
+        <span class="badge" style="background:var(--surface-3);color:var(--text-2)">Bitwarden ×</span>
+        <span class="badge" style="background:var(--surface-3);color:var(--text-2)">屏幕使用时间自身 ×</span>
+      </div>
+    </div>
+
+    <div class="set">
+      <div class="s1">开机自启动</div>
+      <div class="s2">通过「计划任务（登录触发 + 隐藏 + 延迟 30 秒）」实现，避免拖慢开机进桌面。</div>
+      <div class="sw on" data-sw><span class="tk"></span><span class="t">开机后自动静默开始记录</span></div>
+    </div>
+
+    <div class="set">
+      <div class="s1">数据</div>
+      <div class="s2">数据库位于 <code>%LOCALAPPDATA%\ScreenTime\usage.db</code>，预估每年增长 8–20 MB。</div>
+      <div class="opts">
+        <button>导出 CSV</button>
+        <button>导出 JSON</button>
+        <button>清空数据</button>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<div id="tip"></div>
+
+<script>
+/* ============================================================
+   1. 应用目录 —— 纯内联 SVG 图标（正式版改为提取真实图标）
+   ============================================================ */
+const SVG = {
+  code:  '<path d="M8.6 3.2 5.4 20.8" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M13.4 3.2 10.2 20.8" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" opacity=".72"/>',
+  edge:  '<circle cx="12" cy="12" r="8.4" fill="none" stroke="#fff" stroke-width="2.1"/><path d="M4.4 10.4h10.2M8.2 5.2c3 3.4 4.2 9.4 3 13.6M19.6 13.6H8.6" fill="none" stroke="#fff" stroke-width="1.7"/>',
+  figma: '<circle cx="9.4" cy="7.4" r="3.1" fill="#fff"/><circle cx="9.4" cy="16.6" r="3.1" fill="#fff" opacity=".82"/><circle cx="15.4" cy="12" r="3.1" fill="#fff" opacity=".92"/>',
+  ps:    '<rect x="5.6" y="5.6" width="12.8" height="12.8" rx="3.4" fill="none" stroke="#fff" stroke-width="2"/><path d="M9.6 15.4V9.2h2.2a1.9 1.9 0 0 1 0 3.8H9.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>',
+  blend: '<circle cx="12" cy="9.4" r="4.4" fill="#fff"/><path d="M6.4 17.6c1.6-3.2 5-4.4 8.2-3.4 1.9.6 3.1 2 3.4 3.8-3.9 1.4-8.6 1.3-11.6-.4Z" fill="#fff" opacity=".68"/>',
+  wechat:'<ellipse cx="9.6" cy="10.4" rx="6.6" ry="5.4" fill="#fff"/><ellipse cx="15.6" cy="14.4" rx="4.6" ry="3.9" fill="#fff" opacity=".66"/><circle cx="7.6" cy="9.4" r="1.05" fill="#07C160"/><circle cx="11.6" cy="9.4" r="1.05" fill="#07C160"/><circle cx="14.2" cy="13.6" r=".9" fill="#07C160"/><circle cx="17.2" cy="13.6" r=".9" fill="#07C160"/>',
+  qq:    '<path d="M12 4.4c3 0 5.2 2.2 5.2 5.2 0 1.4.5 2.4 1.1 3.4.7 1.1.5 2.6-.9 2.6-.9 0-1.6-.3-2.1-.7-1 .8-2 1.2-3.3 1.2s-2.3-.4-3.3-1.2c-.5.4-1.2.7-2.1.7-1.4 0-1.6-1.5-.9-2.6.6-1 1.1-2 1.1-3.4 0-3 2.2-5.2 5.2-5.2Z" fill="#fff"/><circle cx="10.1" cy="9.6" r="1.1" fill="#12B7F5"/><circle cx="13.9" cy="9.6" r="1.1" fill="#12B7F5"/>',
+  spot:  '<circle cx="12" cy="12" r="8.4" fill="none" stroke="#fff" stroke-width="2"/><path d="M7.8 9.6c2.9-.8 5.9-.5 8.4 1M8.2 12.6c2.3-.6 4.6-.4 6.6.9M8.7 15.3c1.8-.4 3.4-.3 4.9.6" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+  notion:'<rect x="5.4" y="5.4" width="13.2" height="13.2" rx="2.6" fill="none" stroke="#fff" stroke-width="1.9"/><path d="M9.2 15.6V9.1l5.6 6.5V9.1" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  word:  '<path d="M6.6 6.6h10.8v10.8H6.6z" fill="none"/><path d="M7 6.8h10M7 17.2h10" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M8.3 9.6l1.5 5.2 1.4-3.5 1.4 3.5 1.5-5.2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  excel: '<path d="M7 12h10M12 7v10" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".45"/><path d="M8.4 8.4l6.6 7.2M15 8.4l-6.6 7.2" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/>',
+  steam: '<circle cx="9.8" cy="9.8" r="4.2" fill="none" stroke="#fff" stroke-width="1.9"/><circle cx="15.4" cy="15.4" r="3.4" fill="none" stroke="#fff" stroke-width="1.9"/><path d="M13.2 12.6l-2.1-2.1" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>',
+  chrome:'<circle cx="12" cy="12" r="7.6" fill="none" stroke="#fff" stroke-width="2.1"/><circle cx="12" cy="12" r="3" fill="#fff"/>',
+  teams: '<rect x="5.6" y="7.4" width="8.6" height="9.2" rx="1.7" fill="#fff"/><path d="M9.9 9.8v4.4M8.2 9.8h3.4" stroke="#6264A7" stroke-width="1.5" stroke-linecap="round"/><circle cx="16.8" cy="9.4" r="2.3" fill="#fff" opacity=".8"/>',
+  exp:   '<path d="M12 4.6 5.4 8.2v7.6L12 19.4l6.6-3.6V8.2Z" fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round"/><path d="M9.4 10.2h5.2M9.4 13.8h5.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+  term:  '<rect x="5.4" y="6.4" width="13.2" height="11.2" rx="2.2" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M8.6 10.4l2.2 2.2-2.2 2.2M12.6 15h3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+  media: '<circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="1.9"/><path d="M10.4 9.2l4.8 2.8-4.8 2.8Z" fill="#fff"/>',
+  other: '<circle cx="7.4" cy="12" r="1.5" fill="#fff"/><circle cx="12" cy="12" r="1.5" fill="#fff"/><circle cx="16.6" cy="12" r="1.5" fill="#fff"/>'
+};
+
+const APPS = {
+  code:   {name:'Visual Studio Code', color:'#0a84c8', svg:'code'},
+  edge:   {name:'Microsoft Edge',     color:'#2f7fd6', svg:'edge'},
+  figma:  {name:'Figma',              color:'#a259ff', svg:'figma'},
+  ps:     {name:'Adobe Photoshop',    color:'#1473e6', svg:'ps'},
+  blend:  {name:'Blender',            color:'#e8720c', svg:'blend'},
+  wechat: {name:'微信',               color:'#07c160', svg:'wechat'},
+  qq:     {name:'QQ',                 color:'#12b7f5', svg:'qq'},
+  spot:   {name:'Spotify',            color:'#1db954', svg:'spot'},
+  notion: {name:'Notion',             color:'#2b2b2b', svg:'notion'},
+  word:   {name:'Microsoft Word',     color:'#2b579a', svg:'word'},
+  excel:  {name:'Microsoft Excel',     color:'#1e7145', svg:'excel'},
+  steam:  {name:'Steam',              color:'#1b2838', svg:'steam'},
+  chrome: {name:'Google Chrome',      color:'#4285f4', svg:'chrome'},
+  teams:  {name:'Microsoft Teams',    color:'#6264a7', svg:'teams'},
+  exp:    {name:'文件资源管理器',      color:'#f2b21c', svg:'exp'},
+  term:   {name:'Windows 终端',        color:'#33373d', svg:'term'},
+  media:  {name:'媒体播放器',          color:'#0f6cbd', svg:'media'},
+  other:  {name:'其他',               color:'#8b93a3', svg:'other'}
+};
+
+function iconSVG(key, size){
+  const a = APPS[key] || APPS.other;
+  return '<svg class="ico" width="'+size+'" height="'+size+'" viewBox="0 0 24 24" style="background:'+a.color+'">'+SVG[a.svg]+'</svg>';
+}
+
+/* ============================================================
+   2. 模拟数据生成 —— 固定种子，同一天永远得到同一份数据
+   ============================================================ */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const DAY = 86400;
+
+/* 一天中每个小时的"日程模板"：[状态或应用, 权重] */
+function hourTemplate(h, weekend){
+  const work = [
+    ['code',4],['edge',3],['figma',2],['notion',1],['teams',1],['word',1],['term',1],['other',1]
+  ];
+  const eve = [
+    ['chrome',4],['media',3],['steam',2],['wechat',2],['qq',1],['spot',1],['other',1]
+  ];
+  const s = weekend ? 1 : 0;
+  if (s) {
+    if (h < 8)  return {t:'off'};
+    if (h < 9)  return {t:'idle'};
+    if (h < 12) return {t:'apps', w:[['chrome',4],['wechat',2],['media',2],['other',1]]};
+    if (h < 18) return {t:'apps', w:[['figma',4],['ps',3],['blend',3],['spot',2],['edge',2]]};
+    if (h < 24) return {t:'apps', w:[['steam',4],['media',3],['chrome',2],['qq',2],['spot',1]]};
+    return {t:'off'};
+  }
+  if (h < 7)   return {t:'off'};
+  if (h < 8)   return {t:'idle'};
+  if (h < 12)  return {t:'apps', w:work};
+  if (h === 12)return {t:'lock'};
+  if (h < 13)  return {t:'apps', w:[['edge',3],['wechat',2],['chrome',2],['other',1]]};
+  if (h < 18)  return {t:'apps', w:work};
+  if (h < 19)  return {t:'idle'};
+  if (h < 23)  return {t:'apps', w:eve};
+  if (h < 24)  return {t:'lock'};
+  return {t:'off'};
+}
+
+function pick(rnd, weights){
+  let total = 0; for(const w of weights) total += w[1];
+  let r = rnd() * total;
+  for(const w of weights){ r -= w[1]; if (r <= 0) return w[0]; }
+  return weights[weights.length-1][0];
+}
+
+/* 生成一天：连续分段数组 [{t0,t1,state,app,locked,off}] */
+function buildDay(dayIndex, seed){
+  const rnd = mulberry32(seed + dayIndex * 7919);
+  const date = new Date(2025, 5, 11 + dayIndex);
+  const weekend = date.getDay() === 0 || date.getDay() === 6;
+  const secs = new Array(DAY).fill(null);
+  for (let h = 0; h < 24; h++){
+    const tpl = hourTemplate(h, weekend);
+    const base = h * 3600;
+    if (tpl.t === 'off' || tpl.t === 'lock'){
+      for (let i = 0; i < 3600; i++) secs[base+i] = {s: tpl.t === 'off' ? 'off' : 'locked'};
+      continue;
+    }
+    if (tpl.t === 'idle'){
+      const len = 1200 + Math.floor(rnd()*2400);
+      for (let i = 0; i < 3600; i++) secs[base+i] = {s: i < len ? 'idle' : 'active', app: 'other'};
+      continue;
+    }
+    // 活跃小时：切成连续的应用片段
+    let cur = 0;
+    while (cur < 3600){
+      const left = 3600 - cur;
+      let len = Math.round(240 + rnd()*1300);
+      if (rnd() < 0.14) len = Math.round(900 + rnd()*2100);  // 偶尔一段长专注
+      len = Math.min(len, left);
+      const app = pick(rnd, tpl.w);
+      for (let i = 0; i < len; i++) secs[cur+i] = {s:'active', app};
+      cur += len;
+    }
+    // 每小时里掺一点空闲（真实数据里空闲是碎片的）
+    const idleStart = Math.floor(rnd()*3600);
+    const idleLen = Math.floor(rnd()*420);
+    for (let i = idleStart; i < Math.min(3600, idleStart+idleLen); i++){
+      if (secs[base+i] && secs[base+i].s === 'active') secs[base+i] = {s:'idle'};
+    }
+  }
+  return {date, secs, weekend};
+}
+
+/* 把逐秒数组压成连续分段 */
+function toSegments(secs){
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < DAY; i++){
+    const v = secs[i] || {s:'off'};
+    const key = v.s + '|' + (v.app || '');
+    if (!cur || cur.key !== key){
+      if (cur) out.push(cur);
+      cur = {key, t0:i, t1:i+1, s:v.s, app:v.app || null};
+    } else cur.t1 = i+1;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/* 汇总统计 */
+function summarize(segments){
+  const byState = {active:0, idle:0, locked:0, off:0};
+  const byApp = {};
+  for (const g of segments){
+    const d = g.t1 - g.t0;
+    byState[g.s] += d;
+    if (g.s === 'active' && g.app) byApp[g.app] = (byApp[g.app]||0) + d;
+  }
+  const screen = byState.active + byState.idle + byState.locked;   // 屏幕亮着的总时间
+  const total  = DAY;                                              // 全天
+  return {byState, byApp, screen, total, off: byState.off + byState.locked};
+}
+
+/* ============================================================
+   3. 格式化
+   ============================================================ */
+function hm(sec){
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60);
+  if (h > 0 && m > 0) return h+' 小时 '+m+' 分';
+  if (h > 0) return h+' 小时';
+  return m+' 分钟';
+}
+function hmShort(sec){
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60);
+  return h > 0 ? h+'h '+m+'m' : m+'m';
+}
+function kpiHTML(sec){
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60);
+  return h+'<span class="u">小时</span>'+String(m).padStart(2,'0')+'<span class="u">分</span>';
+}
+function hhmm(sec){
+  sec = Math.round(sec) % DAY;
+  return String(Math.floor(sec/3600)).padStart(2,'0')+':'+String(Math.floor(sec%3600/60)).padStart(2,'0');
+}
+function deltaText(cur, prev){
+  const d = cur - prev;
+  if (Math.abs(d) < 60) return {txt:'与昨天持平', dir:'flat'};
+  return {txt:(d>0?'↑ ':'↓ ')+hmShort(Math.abs(d)), dir: d>0?'up':'down'};
+}
+const WEEKDAY = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];
+
+/* ============================================================
+   4. 状态
+   ============================================================ */
+const BASE = new Date();
+const todayIndex = 0;
+let curIndex = 0;
+const cache = {};
+function day(i){
+  if (!cache[i]) cache[i] = buildDay(i, 20250611);
+  return cache[i];
+}
+function dayStats(i){
+  const d = day(i);
+  if (!d._stats){ d._segs = toSegments(d.secs); d._stats = summarize(d._segs); }
+  return d._stats;
+}
+
+/* ============================================================
+   5. 渲染：概览 + 时间轴
+   ============================================================ */
+function stateColor(s){
+  return s === 'active' ? 'var(--st-active)'
+       : s === 'idle'   ? 'var(--st-idle)'
+       : s === 'locked' ? 'var(--st-locked)'
+       : 'var(--st-off)';
+}
+
+function renderDay(){
+  const d = day(curIndex), st = dayStats(curIndex);
+  const prevSt = dayStats(curIndex - 1);
+
+  // 日期标题
+  document.getElementById('dateLabel').innerHTML =
+    d.date.getFullYear()+'年'+(d.date.getMonth()+1)+'月'+d.date.getDate()+'日 <small>'+WEEKDAY[d.date.getDay()]+'</small>';
+
+  // KPI
+  document.getElementById('kpiTotal').innerHTML = kpiHTML(st.screen);
+  const dl = deltaText(st.screen, prevSt.screen);
+  const badge = document.getElementById('kpiDeltaBadge');
+  badge.textContent = dl.txt;
+  badge.className = 'badge ' + (dl.dir === 'flat' ? '' : dl.dir);
+
+  document.getElementById('kpiActive').innerHTML = kpiHTML(st.byState.active);
+  document.getElementById('kpiActivePct').textContent =
+    Math.round(st.byState.active / Math.max(1, st.screen) * 100) + '%';
+  document.getElementById('kpiOff').innerHTML = kpiHTML(st.byState.locked + st.byState.off);
+
+  const appList = Object.entries(st.byApp).sort((a,b)=>b[1]-a[1]);
+  const top = appList[0];
+  document.getElementById('kpiTop').textContent = top ? APPS[top[0]].name : '—';
+  document.getElementById('kpiTopPct').textContent = top ? Math.round(top[1]/Math.max(1,st.screen)*100)+'%' : '0%';
+  document.getElementById('kpiTopCount').textContent = appList.length;
+
+  // 时间轴刻度
+  const scale = document.getElementById('tlScale');
+  scale.innerHTML = [0,3,6,9,12,15,18,21,24].map(h=>
+    '<span style="left:'+(h/24*100)+'%">'+String(h).padStart(2,'0')+':00</span>').join('');
+
+  // 时间轴色块（把过短的分段合并，避免 1px 噪声）
+  const segs = mergeShort(st ? day(curIndex)._segs : [], 90);
+  const tl = document.getElementById('tl');
+  tl.innerHTML = segs.map((g,i)=>{
+    const w = (g.t1-g.t0)/DAY*100;
+    const t = g.s==='active'
+      ? hhmm(g.t0)+' – '+hhmm(g.t1)+'　'+(APPS[g.app]?APPS[g.app].name:'使用中')+'　'+hmShort(g.t1-g.t0)
+      : hhmm(g.t0)+' – '+hhmm(g.t1)+'　'+({idle:'空闲',locked:'锁屏',off:'熄屏 / 睡眠'}[g.s])+'　'+hmShort(g.t1-g.t0);
+    return '<div class="seg-s" data-tip="'+t+'" style="width:'+w+'%;background:'
+      + (g.s==='active' ? (APPS[g.app]?APPS[g.app].color:'#3b82f6') : stateColor(g.s)) + '"></div>';
+  }).join('')
+  + Array.from({length:23},(_,i)=>'<div class="tl-hour" style="left:'+((i+1)/24*100)+'%"></div>').join('');
+
+  // 时间轴上的图标：每 2 小时取主导应用
+  const icons = document.getElementById('tlIcons') || (()=>{
+    const el = document.createElement('div'); el.className='tl-icons'; el.id='tlIcons';
+    tl.parentElement.appendChild(el); return el;
+  })();
+  icons.innerHTML = topAppsPerBin(day(curIndex)._segs, 720, 3).map(o=>
+    '<div style="position:absolute;left:'+((o.t0)/DAY*100)+'%;transform:translateX(-6px);top:50%;margin-top:-8px" class="ico-wrap">'
+    + iconSVG(o.app,16) + '</div>').join('');
+}
+
+/* 合并过短分段，让时间轴在视觉上更干净 */
+function mergeShort(segs, minSec){
+  const out = [];
+  for (const g of segs){
+    const last = out[out.length-1];
+    if (last && (g.t1-g.t0) < minSec && last.s === g.s && last.app === g.app) last.t1 = g.t1;
+    else out.push({...g});
+  }
+  return out;
+}
+
+/* 按固定时长分箱，取每箱内前台时长靠前的应用 */
+function topAppsPerBin(segs, binSec, n){
+  const bins = [];
+  for (let t = 0; t < DAY; t += binSec){
+    const acc = {};
+    for (const g of segs){
+      if (g.s !== 'active' || !g.app) continue;
+      const a = Math.max(g.t0, t), b = Math.min(g.t1, t + binSec);
+      if (b > a) acc[g.app] = (acc[g.app]||0) + (b-a);
+    }
+    const arr = Object.entries(acc).sort((x,y)=>y[1]-x[1]).slice(0, n);
+    bins.push({t0:t, apps:arr});
+  }
+  // 只保留有内容的箱，并去掉与上一箱重复的首选
+  const out = []; let lastTop = null;
+  for (const b of bins){
+    if (!b.apps.length){ lastTop = null; continue; }
+    if (b.apps[0][0] === lastTop) continue;
+    out.push({t0:b.t0, app:b.apps[0][0]});
+    lastTop = b.apps[0][0];
+  }
+  return out;
+}
+
+/* ============================================================
+   6. 渲染：分时柱状图（核心视觉）
+   ============================================================ */
+function renderChart(){
+  const segs = day(curIndex)._segs;
+  const chart = document.getElementById('chart');
+  const MAXH = 250;          // 柱身最大高度（图表另有 22px 顶部留白放图标）
+
+  // 每小时：前台使用秒数 + 应用构成
+  const hours = [];
+  for (let h = 0; h < 24; h++){
+    const acc = {}; let active = 0;
+    for (const g of segs){
+      const a = Math.max(g.t0, h*3600), b = Math.min(g.t1, (h+1)*3600);
+      if (b <= a) continue;
+      if (g.s === 'active' && g.app){ acc[g.app] = (acc[g.app]||0)+(b-a); active += (b-a); }
+    }
+    let arr = Object.entries(acc).sort((x,y)=>y[1]-x[1]);
+    // 长尾合并为"其他"，避免柱子被切碎
+    if (arr.length > 5){
+      const rest = arr.slice(5).reduce((s,x)=>s+x[1],0);
+      arr = arr.slice(0,5); if (rest > 0) arr.push(['other', rest]);
+    }
+    hours.push({h, active, arr});
+  }
+
+  // 只保留 ylab 与柱子
+  chart.querySelectorAll('.barwrap').forEach(e=>e.remove());
+  const ylabs = chart.querySelectorAll('.ylab');
+  ylabs[0].style.bottom = MAXH+'px';
+  ylabs[1].style.bottom = (MAXH/2)+'px';
+
+  // 量一次柱子宽度：图标最多 3 个，窄窗口自动降级，避免相邻柱子图标相撞
+  const probe = document.createElement('div');
+  probe.className = 'barwrap';
+  probe.style.visibility = 'hidden';
+  chart.appendChild(probe);
+  const wrapW = probe.getBoundingClientRect().width;
+  probe.remove();
+
+  hours.forEach(({h, active, arr})=>{
+    const wrap = document.createElement('div');
+    wrap.className = 'barwrap';
+    const body = document.createElement('div');
+    body.className = 'barbody';
+    body.style.height = '0px';
+
+    const totalTop = arr.reduce((s,x)=>s+x[1],0) || 1;
+    arr.forEach(([app, sec])=>{
+      const sl = document.createElement('div');
+      sl.className = 'slice';
+      sl.style.flex = sec + ' 0 0';
+      sl.style.background = APPS[app] ? APPS[app].color : APPS.other.color;
+      sl.dataset.tip = hhmm(h*3600)+' – '+hhmm((h+1)*3600)+'\n'
+        + (APPS[app]?APPS[app].name:app)+'　'+hmShort(sec)+'（占本时段 '+Math.round(sec/totalTop*100)+'%）';
+      sl.style.minHeight = (sec/totalTop > 0.06 ? 3 : 2) + 'px';
+      body.appendChild(sl);
+    });
+
+    // 柱顶图标：该小时时长 Top3 应用（窄窗口自动降级为 Top2 / Top1，避免相邻柱子图标相撞）
+    if (active > 120 && arr.length){
+      const topN = wrapW >= 30 ? 3 : wrapW >= 22 ? 2 : 1;
+      const shown = arr.slice(0, topN);
+      const badge = document.createElement('div');
+      badge.className = 'barapp';
+      badge.innerHTML = shown.map(([app])=>iconSVG(app, 17)).join('')
+        + (arr.length > shown.length ? '<span class="more">+'+(arr.length-shown.length)+'</span>' : '');
+      wrap.appendChild(badge);
+      wrap.dataset.tip += '\n主要应用：' + arr.slice(0,3)
+        .map(([app,sec])=> (APPS[app]?APPS[app].name:app)+' '+hmShort(sec)).join('　');
+    }
+    wrap.appendChild(body);
+    wrap.dataset.tip = hhmm(h*3600)+' – '+hhmm((h+1)*3600)+'\n前台使用 '+hmShort(active)
+      + (arr.length ? '\n主要应用：'+(APPS[arr[0][0]]?APPS[arr[0][0]].name:'—') : '');
+    wrap.addEventListener('mouseenter', e=>showTip(e, wrap.dataset.tip));
+    wrap.addEventListener('mousemove', moveTip);
+    wrap.addEventListener('mouseleave', hideTip);
+    chart.appendChild(wrap);
+
+    // 动画
+    requestAnimationFrame(()=>{ body.style.height = (active/3600*MAXH)+'px'; });
+  });
+
+  document.getElementById('hourlab').innerHTML =
+    hours.map(o=>'<span>'+String(o.h).padStart(2,'0')+'</span>').join('');
+}
+
+/* ============================================================
+   7. 渲染：排行榜
+   ============================================================ */
+function renderRank(elId, stats, prevStats, maxRows){
+  const el = document.getElementById(elId);
+  const screen = Math.max(1, stats.screen);
+  const list = Object.entries(stats.byApp).sort((a,b)=>b[1]-a[1]).slice(0, maxRows || 12);
+  const max = list.length ? list[0][1] : 1;
+  const totalActive = Math.max(1, stats.byState.active);
+
+  let html = '<div class="row head"><span></span><span></span><span>应用</span>'
+    + '<span style="text-align:right">时长</span><span style="text-align:right">占比</span>'
+    + '<span style="text-align:right">对比昨天</span></div>';
+
+  html += list.map(([app, sec], i)=>{
+    const a = APPS[app] || APPS.other;
+    const prev = (prevStats && prevStats.byApp[app]) || 0;
+    const d = sec - prev;
+    const dTxt = Math.abs(d) < 60 ? '—'
+      : '<span style="color:'+(d>0?'var(--up)':'var(--down)')+'">'+(d>0?'+':'−')+hmShort(Math.abs(d))+'</span>';
+    const rk = i < 3 ? 'top'+(i+1) : '';
+    return '<div class="row" data-tip="'+a.name+'\n时长 '+hm(sec)+'　占前台使用 '+Math.round(sec/totalActive*100)+'%'+(prev?'\n昨天同时长 '+hm(prev):'')+'">'
+      + '<span class="rk '+rk+'">'+(i+1)+'</span>'
+      + '<span class="ico-shadow-around" style="display:grid;place-items:center;width:30px;height:30px">'+iconSVG(app,30)+'</span>'
+      + '<span class="nm"><span class="t1">'+a.name+'</span><span class="t2">'+groupOf(app)+'</span></span>'
+      + '<span class="dur">'+hmShort(sec)+'</span>'
+      + '<span class="share">'+(sec/screen*100).toFixed(1)+'%</span>'
+      + '<span class="delta">'+dTxt+'</span>'
+      + '<span class="track" style="grid-column:3/7;margin-top:-4px"><i style="width:'+(sec/max*100)+'%;background:'+a.color+'"></i></span>'
+      + '</div>';
+  }).join('');
+  el.innerHTML = html;
+}
+function groupOf(app){
+  const g = {code:'开发', term:'开发', exp:'系统', edge:'浏览器', chrome:'浏览器', figma:'设计',
+    ps:'设计', blend:'设计', word:'办公', excel:'办公', notion:'办公', teams:'沟通',
+    wechat:'沟通', qq:'沟通', steam:'娱乐', media:'娱乐', spot:'娱乐', other:'其他'};
+  return g[app] || '应用';
+}
+
+/* ============================================================
+   8. 周 / 月视图
+   ============================================================ */
+function renderWeek(){
+  const el = document.getElementById('weekbars');
+  const idxs = [-6,-5,-4,-3,-2,-1,0];
+  const data = idxs.map(i=>({i, st: dayStats(i), d: day(i)}));
+  const max = Math.max(...data.map(o=>o.st.screen));
+  el.innerHTML = data.map(o=>{
+    const h = o.st.screen / max * 100;
+    return '<div class="wb" data-tip="'+o.d.date.getMonth()+1+'月'+o.d.date.getDate()+'日 '+WEEKDAY[o.d.date.getDay()]
+      + '\n屏幕前 '+hm(o.st.screen)+'\n真正使用 '+hm(o.st.byState.active)
+      + '\n熄屏/锁屏 '+hm(o.st.byState.off + o.st.byState.locked)+'">'
+      + '<div class="stem'+(o.i===0?' today':'')+'" style="height:'+h+'%"></div>'
+      + '<div><div class="cap">'+WEEKDAY[o.d.date.getDay()].replace('星期','周')+(o.i===0?' <b>今天</b>':'')+'</div>'
+      + '<div class="amt">'+hmShort(o.st.screen)+'</div></div></div>';
+  }).join('');
+  el.querySelectorAll('.wb').forEach(b=>{
+    b.addEventListener('mouseenter', e=>showTip(e, b.dataset.tip));
+    b.addEventListener('mousemove', moveTip);
+    b.addEventListener('mouseleave', hideTip);
+  });
+
+  // 周排行 = 近 7 天累加
+  const agg = {byState:{active:0,idle:0,locked:0,off:0}, byApp:{}, screen:0};
+  const prevAgg = {byState:{active:0,idle:0,locked:0,off:0}, byApp:{}, screen:0};
+  data.forEach(o=>{
+    agg.screen += o.st.screen; agg.byState.active += o.st.byState.active;
+    Object.entries(o.st.byApp).forEach(([k,v])=>agg.byApp[k]=(agg.byApp[k]||0)+v);
+  });
+  [-13,-12,-11,-10,-9,-8,-7].forEach(i=>{
+    const s = dayStats(i); prevAgg.screen += s.screen;
+    Object.entries(s.byApp).forEach(([k,v])=>prevAgg.byApp[k]=(prevAgg.byApp[k]||0)+v);
+  });
+  renderRank('rankWeek', agg, prevAgg, 10);
+}
+
+function renderMonth(){
+  const el = document.getElementById('heat');
+  const first = new Date(2025,5,1);
+  const daysInMonth = 30;
+  const startPad = first.getDay();
+  const max = 40000;
+  let html = ['日','一','二','三','四','五','六'].map(d=>'<div class="hd">'+d+'</div>').join('');
+  for (let i = 0; i < startPad; i++) html += '<div class="cell blank"></div>';
+  for (let d = 1; d <= daysInMonth; d++){
+    const idx = d - 11;                        // day(0) 是 6 月 11 日
+    let val = null;
+    if (idx <= 0 && idx > -20) val = dayStats(idx).screen;
+    else { const r = mulberry32(9000+d); val = 9000 + r()*33000; }
+    const lv = val > 38000 ? 4 : val > 30000 ? 3 : val > 18000 ? 2 : val > 8000 ? 1 : 0;
+    const bg = lv === 0 ? 'var(--surface-3)'
+      : 'color-mix(in srgb, var(--accent) '+(lv*24+22)+'%, var(--surface-3))';
+    const fg = lv >= 3 ? '#fff' : 'var(--text-2)';
+    html += '<div class="cell lv'+lv+'" style="background:'+bg+';color:'+fg+'" '
+      + 'data-tip="6 月 '+d+' 日\n屏幕前 '+hm(val)+'">'+d+'<b>'+Math.round(val/3600)+'h</b></div>';
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('.cell').forEach(c=>{
+    if (!c.dataset.tip) return;
+    c.addEventListener('mouseenter', e=>showTip(e, c.dataset.tip));
+    c.addEventListener('mousemove', moveTip);
+    c.addEventListener('mouseleave', hideTip);
+  });
+
+  // 月排行
+  const agg = {byState:{active:0,idle:0,locked:0,off:0}, byApp:{}, screen:0};
+  const monthApp = {code:142000, edge:98000, figma:76000, chrome:64000, ps:51000, wechat:47000,
+    word:38000, notion:31000, steam:29000, media:26000, teams:21000, blend:18000, excel:15000,
+    spot:12000, exp:9000, qq:8000, term:7000, other:11000};
+  Object.entries(monthApp).forEach(([k,v])=>{ agg.byApp[k]=v; agg.screen+=v; });
+  agg.byState.active = agg.screen;
+  const prevAgg = {byState:{active:1,idle:0,locked:0,off:0}, byApp:{}, screen:1};
+  Object.entries(monthApp).forEach(([k,v])=>{ prevAgg.byApp[k]=Math.round(v*(0.72+ (k.charCodeAt(0)%10)/22)); });
+  renderRank('rankMonth', agg, prevAgg, 10);
+}
+
+/* 洞察：从分段里算出真实指标，而不是写死文案 */
+function computeInsights(i){
+  const segs = day(i)._segs;
+  // 相邻分段合并为"会话"，空闲/锁屏/熄屏都会打断会话
+  const ses = [];
+  for (const g of segs){
+    if (g.s !== 'active' || !g.app) continue;
+    const last = ses[ses.length-1];
+    if (last && last.app === g.app && g.t0 - last.t1 <= 20) last.t1 = g.t1;
+    else ses.push({app:g.app, t0:g.t0, t1:g.t1});
+  }
+  const best = ses.slice().sort((a,b)=>(b.t1-b.t0)-(a.t1-a.t0))[0];
+  // 切换次数：相邻会话应用不同即计一次
+  let switches = 0;
+  for (let k = 1; k < ses.length; k++) if (ses[k].app !== ses[k-1].app) switches++;
+  const activeSec = Math.max(1, dayStats(i).byState.active);
+  // 最忙的 2 小时窗口（按整点对齐）
+  const hours = [];
+  for (let h = 0; h < 24; h++){
+    let a = 0;
+    for (const g of segs){
+      if (g.s !== 'active') continue;
+      a += Math.max(0, Math.min(g.t1,(h+1)*3600) - Math.max(g.t0,h*3600));
+    }
+    hours.push(a);
+  }
+  let bh = 0, bv = -1;
+  for (let h = 0; h + 1 < 24; h++){
+    const v = hours[h] + hours[h+1];
+    if (v > bv){ bv = v; bh = h; }
+  }
+  return {best, switches, activeSec, peak:{h:bh, v:bv}};
+}
+
+function renderInsights(i){
+  const o = computeInsights(i);
+  const set = (id, v)=>{ const el=document.getElementById(id); if(el) el.textContent = v; };
+  if (o.best){
+    set('ins1', hm(o.best.t1-o.best.t0));
+    set('ins1d', (APPS[o.best.app]?APPS[o.best.app].name:o.best.app)+' · '+hhmm(o.best.t0)+' → '+hhmm(o.best.t1));
+    set('foldPeek', hm(o.best.t1-o.best.t0));
+  }
+  set('ins2', o.switches + ' 次');
+  const per = o.activeSec / Math.max(1, o.switches);
+  set('ins2d', '平均每 ' + hm(Math.max(1, per)) + '切换一次，次数越少越专注');
+  set('ins3', String(o.peak.h).padStart(2,'0')+':00 – '+String(o.peak.h+2).padStart(2,'0')+':00');
+  set('ins3d', '今天最集中的两小时，共 ' + hmShort(o.peak.v) + ' 前台使用');
+}
+
+/* ============================================================
+   9. 悬浮提示
+   ============================================================ */
+const tip = document.getElementById('tip');
+function showTip(e, text){
+  tip.innerHTML = String(text).split('\n').map((line, i)=>{
+    if (i === 0) return '<div class="tt">'+line+'</div>';
+    const parts = line.split('　');
+    return '<div class="tr"><span>'+parts[0]+'</span>'+(parts[1]?'<b>'+parts[1]+'</b>':'')+'</div>';
+  }).join('');
+  tip.classList.add('show');
+  moveTip(e);
+}
+function moveTip(e){
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 16;
+  if (x + r.width > innerWidth - 10)  x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 10) y = e.clientY - r.height - 16;
+  tip.style.left = x+'px'; tip.style.top = y+'px';
+}
+function hideTip(){ tip.classList.remove('show'); }
+
+/* 时间轴分段也复用提示 */
+function bindTips(root){
+  root.querySelectorAll('[data-tip]').forEach(el=>{
+    if (el.closest('.barwrap') || el.classList.contains('wb') || el.classList.contains('cell') || el.classList.contains('row')) return;
+    el.addEventListener('mouseenter', e=>showTip(e, el.dataset.tip));
+    el.addEventListener('mousemove', moveTip);
+    el.addEventListener('mouseleave', hideTip);
+  });
+}
+
+/* ============================================================
+   10. 主题 / 交互
+   ============================================================ */
+let theme = 'auto';
+function applyTheme(t){
+  theme = t;
+  document.documentElement.setAttribute('data-theme', t);
+  document.querySelectorAll('#themeOpts button').forEach(b=>
+    b.classList.toggle('on', b.dataset.themeVal === t));
+}
+document.getElementById('themeBtn').onclick = ()=>{
+  applyTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'auto' : 'light');
+};
+document.querySelectorAll('#themeOpts button').forEach(b=>{
+  b.onclick = ()=>applyTheme(b.dataset.themeVal);
+});
+document.querySelectorAll('#idleOpts button').forEach(b=>{
+  b.onclick = ()=>{ document.querySelectorAll('#idleOpts button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+});
+document.querySelectorAll('[data-sw]').forEach(s=>{
+  s.onclick = ()=>s.classList.toggle('on');
+});
+
+const drawer = document.getElementById('drawer'), scrim = document.getElementById('scrim');
+function openDrawer(o){ drawer.classList.toggle('show', o); scrim.classList.toggle('show', o); }
+document.getElementById('setBtn').onclick = ()=>openDrawer(true);
+document.getElementById('closeDrawer').onclick = ()=>openDrawer(false);
+scrim.onclick = ()=>openDrawer(false);
+
+document.querySelectorAll('#tabSeg button').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('#tabSeg button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    const t = b.dataset.tab;
+    document.getElementById('view-day').style.display   = t==='day'   ? '' : 'none';
+    document.getElementById('view-week').style.display  = t==='week'  ? '' : 'none';
+    document.getElementById('view-month').style.display = t==='month' ? '' : 'none';
+    if (t==='week')  renderWeek();
+    if (t==='month') renderMonth();
+    window.scrollTo({top:0, behavior:'smooth'});
+  };
+});
+
+/* 日期导航：curIndex <= 0（0 = 今天），不允许看未来 */
+function shiftDay(n){
+  const next = Math.min(0, curIndex + n);
+  if (next === curIndex) return;
+  curIndex = next;
+  refresh();
+}
+document.getElementById('prevDay').onclick = ()=>shiftDay(-1);
+document.getElementById('nextDay').onclick = ()=>shiftDay(1);
+document.getElementById('todayBtn').onclick = ()=>{ curIndex = 0; refresh(); };
+
+function refresh(){
+  renderDay();
+  renderChart();
+  renderRank('rank', dayStats(curIndex), dayStats(curIndex-1), 12);
+  renderInsights(curIndex);
+  bindTips(document);
+  document.getElementById('nextDay').disabled = (curIndex >= 0);
+  document.getElementById('dayHint').textContent = curIndex === 0
+    ? '数据来自本地采集 · 正在记录中'
+    : '历史数据 · 已归档（原始片段 + 日汇总）';
+}
+
+/* 初始化 */
+(function init(){
+  renderDay(); renderChart(); renderRank('rank', dayStats(0), dayStats(-1), 12); renderInsights(0); bindTips(document);
+  document.getElementById('nextDay').disabled = true;
+})();
+</script>
+</body>
+</html>

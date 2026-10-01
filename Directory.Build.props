@@ -1,0 +1,22 @@
+<Project>
+  <!-- 全局构建设置：所有项目共享 -->
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!--
+      必须保持 false（默认）。
+      打开 InvariantGlobalization 会剥离所有区域性数据，任何带文化的格式化
+      （WPF 内部的日期/数字格式化、ToString("d") 等）都会抛
+      "Cannot find non-neutral culture related to 'en-us'"。
+      这是踩过的坑：WPF 界面一起来就崩，就是这个开关导致的。
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <NeutralLanguage>zh-Hans</NeutralLanguage>
+    <Company>ScreenTime</Company>
+    <Product>屏幕使用时间</Product>
+    <!-- 关键：源文件以 UTF-8 读取，避免中文注释/字符串乱码 -->
+    <CodePage>65001</CodePage>
+  </PropertyGroup>
+</Project>

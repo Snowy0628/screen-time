@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>安装</AssemblyName>
+    <RootNamespace>ScreenTime.Installer</RootNamespace>
+    <StartupObject>Installer</StartupObject>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <LangVersion>12</LangVersion>
+
+    <!-- 与主程序一致：自包含、单文件，朋友那边无需装 .NET -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+
+    <ApplicationIcon>..\assets\app.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <AssemblyTitle>屏幕使用时间 安装程序</AssemblyTitle>
+    <Product>屏幕使用时间</Product>
+  </PropertyGroup>
+
+</Project>

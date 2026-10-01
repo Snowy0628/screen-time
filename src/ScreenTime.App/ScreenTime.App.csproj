@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>ScreenTime.App</RootNamespace>
+    <AssemblyName>ScreenTime.App</AssemblyName>
+
+    <UseWindowsForms>true</UseWindowsForms>
+    <!--
+      同时启用 WPF：界面用 WPF 实现（自绘图表、DynamicResource 换肤），
+      托盘图标与系统事件仍依赖 WinForms 的 NotifyIcon / SystemEvents，
+      两者可在同一进程共存。
+    -->
+    <UseWPF>true</UseWPF>
+
+    <!--
+      关键：关闭隐式 using。
+      同时引用 WinForms 与 WPF 时，SDK 会注入 global using System.Windows.Forms，
+      导致 Brush / Color / Application / Image / Orientation / HorizontalAlignment
+      等一大批同名类型在两个命名空间之间产生歧义（CS0104）。
+      关闭后由各文件显式引入所需命名空间，歧义自然消失，意图也更清楚。
+    -->
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!--
+      App.xaml 会让 SDK 自动生成一个 Main，与 Program.cs 里手写的入口冲突。
+      这里显式指定启动对象，保留手写 Main 的完全控制权
+      （参数解析、单实例、诊断子命令、异常兜底都在那里）。
+    -->
+    <StartupObject>ScreenTime.App.Program</StartupObject>
+    <!-- 应用图标：嵌入为 Win32 资源，资源管理器/快捷方式/任务栏都用它 -->
+    <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
+    <!-- 版本信息：托盘提示与任务管理器里显示的名称 -->
+    <AssemblyTitle>屏幕使用时间</AssemblyTitle>
+    <FileVersion>0.1.0.0</FileVersion>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!--
+    发布配置。写成属性而不是命令行开关，保证“怎么构建”与代码一起被版本管理。
+
+    关键决策：**不使用** IncludeNativeLibrariesForSelfExtract。
+    它会把 SQLite 的原生库打进 exe，但代价是每次启动都要往 %TEMP%\.net\ 解压，
+    这在受限环境下会直接启动失败（"Failed to create directory ... for extracting bundled files"），
+    即使在正常环境也增加启动延迟与故障点。
+    改为让原生库作为独立文件与 exe 并列发布，启动更快、更稳。
+
+    说明：自包含发布会带出 wpfgfx_cor3 / PresentationNative_cor3 / D3DCompiler_47_cor3
+    等约 7.8MB 的原生库。已核实这与项目名后缀无关，而是 Microsoft.WindowsDesktop.App
+    运行时包本身就含它们。WPF + WinForms 都需要该运行时包，因此这部分体积无法剥离。
+    若将来要压缩体积，唯一办法是改为框架依赖发布，代价是目标机器需装 .NET 桌面运行时。
+  -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ScreenTime.Core\ScreenTime.Core.csproj" />
+  </ItemGroup>
+
+</Project>
