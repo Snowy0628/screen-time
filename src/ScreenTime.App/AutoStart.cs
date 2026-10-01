@@ -102,10 +102,10 @@ internal static class AutoStart
         try
         {
             bool task = TaskExists();
-            bool lnk = File.Exists(StartupShortcutPath);
-            if (task && lnk) return "计划任务 + 启动文件夹";
+            bool vbs = File.Exists(StartupScriptPath);
+            if (task && vbs) return "计划任务 + 启动文件夹脚本";
             if (task) return "计划任务";
-            if (lnk) return "启动文件夹";
+            if (vbs) return "启动文件夹脚本";
             return "未配置";
         }
         catch
@@ -114,44 +114,48 @@ internal static class AutoStart
         }
     }
 
-    /// <summary>启用自启。计划任务 + 启动文件夹（含 VBS 包装），不用注册表。</summary>
+    /// <summary>
+    /// 启用自启：计划任务（主）+ 启动文件夹脚本（备）。
+    ///
+    /// 为什么是两条而不是一条：
+    ///   计划任务实测可用（登录后约 20 秒静默拉起），是本机真正生效的那条。
+    ///   但在这台机器上它曾经莫名消失过两次，而普通用户根本不会去
+    ///   「任务计划程序」里排查。所以保留启动文件夹里的 **.vbs** 作为独立备份——
+    ///   它依赖完全不同的机制（explorer 直接交给 Windows Script Host 执行），
+    ///   一条坏了另一条还能救。
+    ///
+    /// 为什么**不再**放启动文件夹的 .lnk：
+    ///   实测本机对启动文件夹里的 .lnk 不生效——Windows 从不往
+    ///   Explorer\StartupApproved\StartupFolder 写本程序的记录
+    ///   （同键里 RK Keyboard.lnk、Ollama.lnk 都有），说明开机时根本没被执行。
+    ///   从未起过作用的机制就属于"没用到的"，去掉以免混淆。
+    ///
+    /// 全程不写注册表。
+    /// </summary>
     public static (bool Ok, string Method, string Detail) Enable(string exePath)
     {
-        // 三条路都配上，互为保险。
-        //
-        // 为什么要这么多条：实测本机存在"两条常规路都失效"的情况——
-        //   · 启动文件夹的 .lnk：Windows 从不往 StartupApproved\StartupFolder 写记录，
-        //     同一键里别的程序都有，唯独本程序没有，说明开机时根本没被执行
-        //   · 计划任务（登录触发）：任务 Status=Ready、定义正常，
-        //     但 Last Run Time 永远停在 1999/11/30（Never run），
-        //     而且任务定义文件还消失过两次
-        //
-        // 第 3 条刻意用 **.vbs 而不是 .lnk**：启动文件夹里的脚本由 explorer 直接执行，
-        // **不经过 StartupApproved 那套"用户是否禁用过"的记录机制**，
-        // 因此能绕开 .lnk 被忽略的问题；同时也不用写注册表，
-        // 用户的顾虑（不想动注册表）得以满足。
         bool taskOk = TryCreateTask(exePath, out string taskDetail);
-        bool lnkOk = TryCreateStartupShortcut(exePath, out string lnkDetail);
         bool vbsOk = TryCreateStartupScript(exePath, out string vbsDetail);
+
+        // 清掉历史版本留下的启动文件夹快捷方式（已被证明无效）
+        RemoveStartupShortcut();
 
         var methods = new List<string>();
         if (taskOk) methods.Add("计划任务");
-        if (lnkOk) methods.Add("启动文件夹快捷方式");
         if (vbsOk) methods.Add("启动文件夹脚本");
 
         if (methods.Count > 0)
         {
             var details = new List<string>();
             if (taskOk) details.Add(taskDetail);
-            if (lnkOk) details.Add(lnkDetail);
             if (vbsOk) details.Add(vbsDetail);
             return (true, string.Join(" + ", methods), string.Join("；", details));
         }
 
-        return (false, "", "三种方式都失败 —— " + taskDetail + " / " + lnkDetail + " / " + vbsDetail);
+        return (false, "", "两种方式都失败 —— " + taskDetail + " / " + vbsDetail);
     }
 
-    /// <summary>关闭自启：三条路都清掉，避免留下多余项。</summary>
+    /// <summary>关闭自启：所有痕迹都清掉，包括历史版本留下的。</summary>
     public static (bool Ok, string Detail) Disable()
     {
         var sb = new StringBuilder();
@@ -163,7 +167,7 @@ internal static class AutoStart
             else { ok = false; sb.Append("删除计划任务失败：" + d); }
         }
 
-        // 早先版本用过注册表 Run 项，这里一并清理，避免留下孤儿启动项
+        // 早先版本用过注册表 Run 项，一并清理，避免留下孤儿启动项
         try
         {
             using Microsoft.Win32.RegistryKey? key =
@@ -177,7 +181,7 @@ internal static class AutoStart
         }
         catch { }
 
-        foreach (string path in new[] { StartupShortcutPath, StartupScriptPath })
+        foreach (string path in new[] { StartupScriptPath, StartupShortcutPath })
         {
             try
             {
@@ -197,6 +201,16 @@ internal static class AutoStart
 
         if (sb.Length == 0) sb.Append("本来就没有配置自启");
         return (ok, sb.ToString());
+    }
+
+    /// <summary>删除启动文件夹里的快捷方式（历史版本遗留，实测无效）。</summary>
+    private static void RemoveStartupShortcut()
+    {
+        try
+        {
+            if (File.Exists(StartupShortcutPath)) File.Delete(StartupShortcutPath);
+        }
+        catch { }
     }
 
     // ================= 启动文件夹里的 VBS 脚本 =================

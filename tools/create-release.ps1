@@ -1,8 +1,8 @@
-﻿# 创建 GitHub Release 并上传安装包
+# 创建 GitHub Release 并上传安装包
 #
 # 用法：
 #   $env:GITHUB_TOKEN = 'github_pat_xxx'
-#   pwsh -File tools/create-release.ps1 -Tag v1.0 -Notes tools\release-notes-v1.0.md -Asset package\ScreenTime-v1.0-Setup.zip
+#   pwsh -File tools/create-release.ps1 -Tag v1.2 -Notes tools\release-notes-v1.2.md -Asset package\ScreenTime-v1.2-Setup.zip
 #
 # 凭据从环境变量读取，绝不写进脚本（GitHub 推送保护会拒绝含 token 的提交）。
 param(

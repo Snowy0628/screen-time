@@ -2,7 +2,7 @@
 #
 # 用法：
 #   $env:GITHUB_TOKEN = 'github_pat_xxx'      # 或在命令行传入 -Token
-#   pwsh -File tools/upload-release-asset.ps1 -Tag v1.0 -Asset package\xxx.zip
+#   pwsh -File tools/upload-release-asset.ps1 -Tag v1.2 -Asset package\xxx.zip
 #
 # 为什么不把 token 写在脚本里：
 #   GitHub 的推送保护（Push Protection）会扫描提交内容，发现 Personal Access Token
