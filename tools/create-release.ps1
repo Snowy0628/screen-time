@@ -1,15 +1,21 @@
-# 创建 GitHub Release 并上传安装包
+# Create a GitHub Release and upload the installer as an asset.
 #
-# 用法：
+# Usage:
 #   $env:GITHUB_TOKEN = 'github_pat_xxx'
 #   pwsh -File tools/create-release.ps1 -Tag v1.2 -Notes tools\release-notes-v1.2.md -Asset package\ScreenTime-v1.2-Setup.zip
 #
-# 凭据从环境变量读取，绝不写进脚本（GitHub 推送保护会拒绝含 token 的提交）。
+# The token is read from the environment and never written into the repo
+# (GitHub Push Protection rejects any commit containing a PAT).
+#
+# This script is deliberately **ASCII-only**. PowerShell reads .ps1 files using
+# the console code page; a UTF-8 BOM or double-encoded Chinese text makes the
+# parser fail before the script even runs. All Chinese text lives in the
+# release-notes markdown file, which is read with an explicit encoding.
 param(
     [Parameter(Mandatory = $true)][string]$Tag,
     [Parameter(Mandatory = $true)][string]$Notes,
     [Parameter(Mandatory = $true)][string]$Asset,
-    [string]$Title = "屏幕使用时间 $Tag",
+    [string]$Title,
     [string]$Repo  = 'Snowy0628/screen-time',
     [string]$Token = $env:GITHUB_TOKEN,
     [switch]$Prerelease
@@ -18,9 +24,10 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-if ([string]::IsNullOrWhiteSpace($Token)) { Write-Host '缺少 token（GITHUB_TOKEN）'; exit 1 }
-if (-not (Test-Path $Notes)) { Write-Host "找不到说明文件：$Notes"; exit 1 }
-if (-not (Test-Path $Asset)) { Write-Host "找不到安装包：$Asset"; exit 1 }
+if ([string]::IsNullOrWhiteSpace($Title)) { $Title = "ScreenTime $Tag" }
+if ([string]::IsNullOrWhiteSpace($Token)) { Write-Host 'ERROR: missing token (set GITHUB_TOKEN)'; exit 1 }
+if (-not (Test-Path $Notes)) { Write-Host "ERROR: notes file not found: $Notes"; exit 1 }
+if (-not (Test-Path $Asset)) { Write-Host "ERROR: asset not found: $Asset"; exit 1 }
 
 $api = 'https://api.github.com'
 $hdr = @{
@@ -37,7 +44,7 @@ $body = @{
     prerelease = [bool]$Prerelease
 } | ConvertTo-Json
 
-# ---- 已存在就更新，不存在就创建 ----
+# Update the release if the tag already has one, otherwise create it.
 $existing = $null
 try {
     $existing = Invoke-RestMethod -Uri "$api/repos/$Repo/releases/tags/$Tag" -Headers $hdr -TimeoutSec 30
@@ -46,31 +53,31 @@ try {
 }
 
 if ($existing) {
-    Write-Host "Release $Tag 已存在，更新说明（id=$($existing.id)）"
+    Write-Host "Release $Tag exists, updating notes (id=$($existing.id))"
     $rel = Invoke-RestMethod -Uri "$api/repos/$Repo/releases/$($existing.id)" -Method Patch `
         -Headers $hdr -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
         -ContentType 'application/json; charset=utf-8' -TimeoutSec 60
 } else {
-    Write-Host "创建 Release $Tag"
+    Write-Host "Creating release $Tag"
     $rel = Invoke-RestMethod -Uri "$api/repos/$Repo/releases" -Method Post `
         -Headers $hdr -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
         -ContentType 'application/json; charset=utf-8' -TimeoutSec 60
 }
-Write-Host "  页面 $($rel.html_url)"
+Write-Host "  page: $($rel.html_url)"
 
-# ---- 上传附件 ----
+# Remove any same-named asset first (GitHub rejects duplicates).
 $name = Split-Path $Asset -Leaf
 foreach ($a in $rel.assets) {
     if ($a.name -eq $name) {
-        Write-Host "  删除同名旧附件 $($a.name)"
+        Write-Host "  removing old asset $($a.name)"
         Invoke-RestMethod -Uri "$api/repos/$Repo/releases/assets/$($a.id)" -Method Delete -Headers $hdr -TimeoutSec 30
     }
 }
 
 $sizeMB    = [math]::Round((Get-Item $Asset).Length / 1MB, 1)
 $localHash = (Get-FileHash $Asset -Algorithm SHA256).Hash
-Write-Host "上传 $name（$sizeMB MB）"
-Write-Host "  本地 SHA256：$localHash"
+Write-Host "Uploading $name ($sizeMB MB)"
+Write-Host "  local SHA256: $localHash"
 
 $uploadUrl = "https://uploads.github.com/repos/$Repo/releases/$($rel.id)/assets?name=$([System.Uri]::EscapeDataString($name))"
 & "$env:SystemRoot\system32\curl.exe" `
@@ -82,17 +89,17 @@ $uploadUrl = "https://uploads.github.com/repos/$Repo/releases/$($rel.id)/assets?
     -H "Content-Type: application/octet-stream" `
     -H "User-Agent: ScreenTime-Release" `
     --data-binary "@$Asset" `
-    --write-out "`n  HTTP=%{http_code}  用时=%{time_total}s  速度=%{speed_upload}B/s`n" `
+    --write-out "`n  HTTP=%{http_code}  time=%{time_total}s  speed=%{speed_upload}B/s`n" `
     -s -S $uploadUrl
 
-# ---- 校验 ----
+# Verify what actually landed on the server.
 $rel2 = Invoke-RestMethod -Uri "$api/repos/$Repo/releases/$($rel.id)" -Headers $hdr -TimeoutSec 30
 $a2 = $rel2.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
-if (-not $a2) { Write-Host '  ✗ 远端没有找到附件'; exit 2 }
+if (-not $a2) { Write-Host '  ERROR: asset not found remotely'; exit 2 }
 
 $remoteHash = ($a2.digest -replace '^sha256:', '').ToUpper()
-Write-Host "  远端大小：$([math]::Round($a2.size / 1MB, 1)) MB"
-Write-Host "  远端 SHA256：$remoteHash"
-if ($remoteHash -ne $localHash) { Write-Host '  ✗ 哈希不一致'; exit 2 }
-Write-Host '  ✓ 与本地逐字节一致'
-Write-Host "  下载地址：$($a2.browser_download_url)"
+Write-Host "  remote size  : $([math]::Round($a2.size / 1MB, 1)) MB"
+Write-Host "  remote SHA256: $remoteHash"
+if ($remoteHash -ne $localHash) { Write-Host '  ERROR: hash mismatch'; exit 2 }
+Write-Host '  OK: byte-for-byte identical to local'
+Write-Host "  download: $($a2.browser_download_url)"
