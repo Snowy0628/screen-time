@@ -65,6 +65,9 @@ internal static class Installer
     /// <summary>为 true 时不创建快捷方式、不启动程序（供自动化测试用）。</summary>
     private static bool _dryRun;
 
+    /// <summary>本次是否由"请求提权重启"而来（避免重复询问）。</summary>
+    private static bool _elevated;
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -74,10 +77,12 @@ internal static class Installer
         // 可选参数（供自动化测试）：
         //   --dir <路径>   安装到指定目录
         //   --dry-run      只复制并修复标签，不建快捷方式、不启动
+        //   --elevated     标记"本次是提权后重启的"，避免重复询问
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] is "--dir" && i + 1 < args.Length) InstallDir = args[++i];
             else if (args[i] is "--dry-run") _dryRun = true;
+            else if (args[i] is "--elevated") _elevated = true;
         }
 
         Banner();
@@ -114,6 +119,24 @@ internal static class Installer
             CopyTree(payload, InstallDir);
             Console.WriteLine($"        已复制 {CountFiles(InstallDir)} 个文件");
         }
+        catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
+        {
+            // 最常见的触发场景：安装程序自己是低完整性（压缩包在桌面解压），
+            // 于是连"写入中完整性目录"这一步都过不去。
+            // 这里不要只抛一句英文异常了事，要给可执行的建议。
+            Fail("复制文件失败：" + ex.Message);
+            Console.WriteLine();
+            Console.WriteLine("  这通常是「低完整性」导致的：从桌面（或其它带低完整性标签的");
+            Console.WriteLine("  目录）解压出来后运行，进程会被 Windows 降级，无权写程序目录。");
+            Console.WriteLine();
+            Console.WriteLine("  请把压缩包解压到桌面以外的位置再运行，例如：");
+            Console.WriteLine($"        {Path.Combine(Path.GetTempPath(), "ScreenTime")}");
+            Console.WriteLine("        C:\\ScreenTime\\");
+            Console.WriteLine();
+            Console.WriteLine("  按任意键退出 ...");
+            try { Console.ReadKey(true); } catch { }
+            return 1;
+        }
         catch (Exception ex)
         {
             Fail("复制文件失败：" + ex.Message);
@@ -127,31 +150,43 @@ internal static class Installer
         if (ownIl.Contains("低"))
         {
             // 受限令牌下改不了标签：这是安装程序**自身**被降级，不是文件的问题。
-            // 必须明确告诉用户怎么办，否则他只会看到"装完了但托盘没有图标"。
             Console.WriteLine();
-            Console.WriteLine("  ┌────────────────────────────────────────────────────┐");
-            Console.WriteLine("  │  注意：本安装程序正以「低完整性」运行               │");
-            Console.WriteLine("  └────────────────────────────────────────────────────┘");
+            Console.WriteLine("  ┌────────────────────────────────────────────────────────────┐");
+            Console.WriteLine("  │  本安装程序正以「低完整性」运行，无法完成安装              │");
+            Console.WriteLine("  └────────────────────────────────────────────────────────────┘");
             Console.WriteLine();
-            Console.WriteLine("  这意味着它是从受限环境（终端 / 沙箱 / 脚本宿主）启动的。");
-            Console.WriteLine("  受限进程无权把文件的完整性标签改回「中」，因此：");
-            Console.WriteLine("    · 托盘图标不会出现");
-            Console.WriteLine("    · 程序无法使用 %LOCALAPPDATA% 存放数据");
+            Console.WriteLine("  原因：压缩包是在【桌面】上解压的。");
+            Console.WriteLine("        桌面目录带「低完整性」标签，且会强制子项继承，");
+            Console.WriteLine("        所以解压出来的 安装.exe 也带上了这个标签。");
+            Console.WriteLine("        从带该标签的文件启动的进程会被 Windows 降级，");
+            Console.WriteLine("        无权写入程序目录（就是刚才那个 Access denied）。");
             Console.WriteLine();
-            Console.WriteLine("  解决办法：关闭本窗口，直接在【文件资源管理器】里");
-            Console.WriteLine("  双击本安装程序（或解压出来的文件夹里的它）。");
-            Console.WriteLine("  这样启动的安装程序是「中完整性」，一切正常。");
+            Console.WriteLine("  解压到桌面以外的位置就好了，例如：");
+            Console.WriteLine($"        {Path.Combine(Path.GetTempPath(), "ScreenTime")}   （临时目录）");
+            Console.WriteLine("        C:\\ScreenTime\\");
+            Console.WriteLine("        D:\\ScreenTime\\");
             Console.WriteLine();
-            Console.Write("  仍要继续吗？(y/N) ");
+            Console.WriteLine("  或者：让本程序尝试自动提权（会弹出 UAC 提示）。");
+            Console.WriteLine("        提权后完整性提升，安装可以继续。");
+            Console.WriteLine();
+            Console.Write("  怎么选？ [e = 尝试提权 / 其它 = 退出] ");
             string? answer = null;
             try { answer = Console.ReadLine(); } catch { }
-            if (answer is null || !answer.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+
+            if (answer is not null && answer.Trim().StartsWith("e", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("  已取消。");
-                return 1;
+                return TryRelaunchElevated(args);
             }
+
             Console.WriteLine();
+            Console.WriteLine("  已退出。请把压缩包解压到桌面以外再运行。");
+            return 1;
         }
+
+        // 提权后仍被判定为低完整性（极少见）：给出提示但不阻断，
+        // 让用户至少能看到后续的标签修复警告。
+        if (_elevated)
+            Console.WriteLine("  （本次以提权方式运行）");
 
         if (!ResetIntegrity(InstallDir))
         {
@@ -276,6 +311,54 @@ internal static class Installer
     }
 
     // ================= 各步骤实现 =================
+
+    /// <summary>
+    /// 以管理员身份重新启动自己（触发 UAC）。提权后的进程是「高完整性」，
+    /// 可以正常写程序目录，也能清除文件上的低完整性标签。
+    ///
+    /// 为什么用 runas 而不是别的办法：
+    ///   低完整性进程**无法**自行提升，只能请求系统重新以更高权限启动。
+    ///   runas 会弹 UAC，用户同意后新进程以管理员身份运行。
+    /// 注意加 --elevated 标记：提权后的进程若还检测到低完整性就会再次询问，
+    /// 而管理员进程不可能还是低完整性，加这个标记是为了防止极端情况下的死循环。
+    /// </summary>
+    private static int TryRelaunchElevated(string[] originalArgs)
+    {
+        try
+        {
+            string? self = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(self))
+            {
+                Console.WriteLine("  无法定位安装程序自身，提权失败。");
+                return 1;
+            }
+
+            var psi = new ProcessStartInfo(self)
+            {
+                UseShellExecute = true,   // runas 必须走 ShellExecute
+                Verb = "runas",
+                WorkingDirectory = AppContext.BaseDirectory,
+            };
+            foreach (string a in originalArgs)
+            {
+                if (!string.Equals(a, "--elevated", StringComparison.OrdinalIgnoreCase))
+                    psi.ArgumentList.Add(a);
+            }
+            psi.ArgumentList.Add("--elevated");
+
+            Process.Start(psi);
+            Console.WriteLine();
+            Console.WriteLine("  已在新的（管理员）窗口中继续安装，本窗口可以关闭。");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine();
+            Console.WriteLine("  提权失败（可能是你取消了 UAC 提示）：" + ex.Message);
+            Console.WriteLine("  请改为把压缩包解压到桌面以外再运行。");
+            return 1;
+        }
+    }
 
     private static void KillRunning()
     {
