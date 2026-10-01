@@ -75,3 +75,6 @@ desktop.ini
 .commitmsg.txt
 
 # 临时提交信息.cm.txt
+
+# 临时提交信息
+commit-msg*.txt

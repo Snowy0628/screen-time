@@ -42,6 +42,8 @@ internal static class Uninstaller
     private static bool _dryRun;
     /// <summary>指定的安装目录（默认自动探测）。</summary>
     private static string? _dirOverride;
+    /// <summary>用户选择删除数据、但数据目录没能删干净。</summary>
+    private static bool dataLeftOver;
 
     /// <summary>
     /// 清理助手模式：等指定进程退出后删除指定目录，然后自删。
@@ -297,16 +299,24 @@ internal static class Uninstaller
             Console.WriteLine($"        已保留：{dataDir}");
         else
         {
-            // WAL 文件可能还被占用，删不掉时不影响卸载结果，只提示
-            if (TryDeleteDir(dataDir, out string why2)) Console.WriteLine("        已删除");
-            else Console.WriteLine("        [警告] 未能完全删除：" + why2);
+            string dataDetail = DeleteDataDir(dataDir);
+            Console.WriteLine("        " + dataDetail);
+
+            // 如实告知：真的没删干净就把残留列出来，不要让用户以为删掉了
+            if (Directory.Exists(dataDir))
+            {
+                Console.WriteLine("        [注意] 使用记录没有被完全删除，仍残留：");
+                foreach (string f in SafeListFiles(dataDir))
+                    Console.WriteLine("            " + f);
+                Console.WriteLine("        重新启动电脑后再运行一次本程序即可删掉。");
+                dataLeftOver = true;
+            }
         }
 
         // ---------- 7. 删除程序目录（含自删） ----------
         Step("5/5", "删除程序文件");
         var failed = new List<string>();
-        var notes = new List<string>();
-        foreach (string d in installDirs)
+        var notes = new List<string>();        foreach (string d in installDirs)
         {
             if (TryDeleteDir(d, out string why3))
             {
@@ -323,7 +333,7 @@ internal static class Uninstaller
         }
 
         Console.WriteLine();
-        if (failed.Count == 0 && taskGone)
+        if (failed.Count == 0 && taskGone && !dataLeftOver)
         {
             Console.WriteLine("  ╔══════════════════════════════════════════════════════╗");
             Console.WriteLine("  ║  卸载完成                                            ║");
@@ -334,6 +344,7 @@ internal static class Uninstaller
             Console.WriteLine("  卸载基本完成，但有项目未能删除：");
             foreach (string f in failed) Console.WriteLine("    · " + f);
             if (!taskGone) Console.WriteLine("    · 计划任务（可在「任务计划程序」里手动删除）");
+            if (dataLeftOver) Console.WriteLine($"    · 使用记录（{dataDir}）");
             Console.WriteLine();
             Console.WriteLine("  提示：重启后再运行一次本程序通常就能删干净。");
         }
@@ -567,6 +578,59 @@ internal static class Uninstaller
     }
 
     /// <summary>
+    /// 删除数据目录（使用记录）。刻意与程序目录分开处理，因为两者的难点不同：
+    ///
+    /// 数据目录里有 SQLite 的 `usage.db-wal` 与 `usage.db-shm`。
+    /// 只要还有任何进程持有它们（刚退出的程序、杀软扫描、资源管理器预览），
+    /// 整个目录就删不掉——这正是用户反馈的"选了全部删除，重装后旧数据又回来了"。
+    ///
+    /// 所以这里不能删一次就完事：**等句柄释放 + 重试 + 如实回报**。
+    /// </summary>
+    private static string DeleteDataDir(string dir)
+    {
+        if (!Directory.Exists(dir)) return "已删除";
+
+        // 程序进程可能刚退出，WAL/SHM 的句柄还没完全释放，给它一点时间
+        for (int attempt = 1; attempt <= 10; attempt++)
+        {
+            try
+            {
+                Directory.Delete(dir, true);
+            }
+            catch (Exception ex)
+            {
+                Diag($"删除数据目录第 {attempt} 次失败：{ex.GetType().Name}: {ex.Message}");
+            }
+
+            if (!Directory.Exists(dir))
+                return attempt == 1 ? "已删除" : $"已删除（第 {attempt} 次尝试成功）";
+
+            Thread.Sleep(500);
+        }
+
+        // 十次都失败：登记重启后删除，并如实告知
+        Diag($"数据目录删除失败，登记 RunOnce：{dir}");
+        ScheduleDeleteOnReboot(dir);
+        return "[注意] 使用记录被占用，暂未删除，已登记为下次登录时自动清理";
+    }
+
+    /// <summary>列出目录下的文件（用于报告残留），失败时返回空列表。</summary>
+    private static List<string> SafeListFiles(string dir)
+    {
+        var list = new List<string>();
+        try
+        {
+            foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+            {
+                try { list.Add($"{f.Substring(dir.Length).TrimStart('\\')}  ({new FileInfo(f).Length / 1024} KB)"); }
+                catch { list.Add(f.Substring(dir.Length).TrimStart('\\')); }
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    /// <summary>
     /// 删除目录。
     ///
     /// 关键难点：**卸载程序自己就在这个目录里**，
@@ -576,14 +640,14 @@ internal static class Uninstaller
     /// 这一步一定能成功（那些文件没被占用）。此时目录里只剩卸载程序自己。
     /// 接着分三级处理这个"只剩下自己"的目录：
     ///   1. 直接删（卸载程序不在这个目录里时走这条，最干净）
-    ///   2. 改名挪到临时目录 —— 整体 rename 不受"文件被占用"限制
-    ///      （只要不跨卷）。挪完安装目录立刻就不存在了。
-    ///      留在临时目录的那份登记重启后删除。
+    ///   2. 把自己复制到临时目录，用副本去删安装目录（清理助手）
     ///   3. 登记 RunOnce，重启后由系统删除
     ///
-    /// 早期版本在这里犯过错：挪走之后删临时副本失败，却仍然返回 true，
-    /// 结果用户看到"卸载完成"，但安装目录（或临时目录）里还留着 34 MB 的卸载程序。
-    /// 现在**如实返回是否还有残留**，并把残留位置告诉用户。
+    /// **返回值语义**：true 表示"调用方关心的问题已解决"，
+    /// 但不代表磁盘上什么都没剩——阶段 3 会在临时目录留下待清理的副本。
+    /// 所以调用方若需要"真的没了"，必须自己再检查 Directory.Exists。
+    /// 早期版本在这里含糊过：删不掉却返回 true，用户看到"已删除"，
+    /// 磁盘上却留着 34 MB 的卸载程序和数据目录。
     /// </summary>
     private static bool TryDeleteDir(string dir, out string error)
     {
@@ -617,17 +681,19 @@ internal static class Uninstaller
         }
         catch { }
 
-        // 目录已空（说明自己不在这个目录里），直接删掉即可
+        // ---- 阶段 2：目录已空（说明自己不在这个目录里），直接删掉即可 ----
+        // 删完必须**复查**：文件系统操作偶有"抛异常但已生效"，
+        // 也偶有"没抛异常但没生效"的情况，以实际状态为准。
         try
         {
             Directory.Delete(dir, true);
-            return true;
         }
         catch (Exception ex1)
         {
-            error = ex1.Message;
             Diag($"阶段2 直接删除失败：{ex1.GetType().Name}: {ex1.Message}");
         }
+        if (!Directory.Exists(dir)) return true;
+        error = "目录仍存在";
 
         // ---- 阶段 3：自己就是删不掉的那个 → 交给"清理助手"副本 ----
         //
