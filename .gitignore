@@ -70,3 +70,6 @@ desktop.ini
 # ---- 编辑器 ----
 .idea/
 *.swp
+
+# 临时提交信息文件
+.commitmsg.txt

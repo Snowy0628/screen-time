@@ -40,8 +40,131 @@ internal static class Uninstaller
     /// <summary>指定的安装目录（默认自动探测）。</summary>
     private static string? _dirOverride;
 
+    /// <summary>
+    /// 清理助手模式：等指定进程退出后删除指定目录，然后自删。
+    ///
+    /// 为什么需要这个模式：**Windows 不允许删除或移动正在运行的程序**，
+    /// 而卸载程序自己就在要删的安装目录里。实测过三种"就地"方案全部失败：
+    ///   · 直接删目录 → 被占用（UnauthorizedAccessException）
+    ///   · 改整个目录的名 → 被占用（只要目录里有被占用的文件，整个目录都动不了）
+    ///   · 只把自己改名移出去 → 文件动了，但**进程仍从原路径执行**，目录照样删不掉
+    ///
+    /// 所以采用安装器领域的标准做法（NSIS / Inno Setup 都这么做）：
+    /// 把**自己的一份副本**放到临时目录，用那个副本去删安装目录。
+    /// 副本不在安装目录里，删除就不会被自己挡住。
+    /// </summary>
+    private static int CleanupWorker(string targetDir, int parentPid)
+    {
+        // 先把自己的工作目录挪到临时目录根部。
+        //
+        // 关键：Windows 会锁住进程的当前工作目录，只要 CWD 还在某个目录里，
+        // 那个目录就删不掉（实测报 "being used by another process"）。
+        // 清理助手迟早要删掉自己所在的目录，所以这一步必须先做。
+        try { Directory.SetCurrentDirectory(Path.GetTempPath()); }
+        catch { }
+
+        // 等父进程（真正的卸载程序）退出，它一退出，安装目录里的 exe 就释放了
+        try
+        {
+            Process parent = Process.GetProcessById(parentPid);
+            parent.WaitForExit(60000);
+        }
+        catch { }
+
+        // 再稳一下，确保文件句柄彻底释放
+        for (int i = 0; i < 40; i++)
+        {
+            if (!Directory.Exists(targetDir)) break;
+            try
+            {
+                Directory.Delete(targetDir, true);
+                break;
+            }
+            catch
+            {
+                Thread.Sleep(250);
+            }
+        }
+
+        // 万一还是删不掉（比如被杀软占用），登记重启后清理
+        if (Directory.Exists(targetDir)) ScheduleDeleteOnReboot(targetDir);
+
+        Diag($"清理助手结束：{targetDir} 存在={Directory.Exists(targetDir)}");
+
+        // 清理助手自己也要自删。
+        //
+        // 注意：**不能判断 self 是否为 null 就跳过**。
+        // 早期版本写了 `if (self is not null) { ... }`，结果在需要清理时
+        // 整个分支被跳过、临时目录留下 33 MB 的 exe 且没有任何日志。
+        // 现在无论 self 是否取得到都走一遍，并把每一步记进日志。
+        try
+        {
+            string? self = Environment.ProcessPath;
+            Diag($"清理助手自删：ProcessPath={(self ?? "(null)")}");
+
+            // 先把 exe 改名到一个只有自己的名字，这样它所在的目录就能删掉
+            string alonePath = self is not null
+                ? Path.Combine(Path.GetTempPath(),
+                    "ScreenTime-uninstaller-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".exe")
+                : "";
+
+            if (self is not null)
+            {
+                File.Move(self, alonePath);
+                Diag($"清理助手已改名：{alonePath}");
+            }
+
+            // exe 改名后，原来的临时目录就空了，直接删
+            string? scratch = self is not null ? Path.GetDirectoryName(self) : null;
+            if (!string.IsNullOrEmpty(scratch) && Directory.Exists(scratch))
+            {
+                try
+                {
+                    Directory.Delete(scratch, true);
+                    Diag($"临时目录已删除：{scratch}");
+                }
+                catch (Exception ex5)
+                {
+                    Diag($"临时目录删除失败：{ex5.GetType().Name}: {ex5.Message}");
+                    ScheduleDeleteOnReboot(scratch);
+                }
+            }
+
+            // 改名后的自己仍在运行，只能登记重启后删除
+            if (alonePath.Length > 0)
+                ScheduleDeleteOnReboot(alonePath);
+        }
+        catch (Exception ex)
+        {
+            Diag($"清理助手自删失败：{ex.GetType().Name}: {ex.Message}");
+        }
+
+        return 0;
+    }
+
     private static int Main(string[] args)
     {
+        // 诊断用：验证 RunOnce 登记是否可用。
+        // 不创建任何目录（某些受限环境禁止在临时目录建目录，
+        // 探针本身不该因为这个失败）。
+        if (args.Length >= 1 && args[0] == "--test-runonce")
+        {
+            string probe = Path.Combine(Path.GetTempPath(), "ScreenTime-probe-nonexistent");
+            bool ok = ScheduleDeleteOnReboot(probe);
+            Console.WriteLine($"RunOnce 登记: {(ok ? "成功" : "失败")}");
+            Console.WriteLine($"目标: {probe}");
+            Console.WriteLine($"日志: {Path.Combine(Path.GetTempPath(), "ScreenTime-uninstall.log")}");
+            return ok ? 0 : 1;
+        }
+
+        // 清理助手模式（内部使用，不面向用户）
+        if (args.Length >= 3 && args[0] == "--cleanup-worker")
+        {
+            int pid = 0;
+            int.TryParse(args[2], out pid);
+            return CleanupWorker(args[1], pid);
+        }
+
         Console.OutputEncoding = Encoding.UTF8;
         Console.Title = "卸载 " + DisplayName;
 
@@ -179,9 +302,16 @@ internal static class Uninstaller
         // ---------- 7. 删除程序目录（含自删） ----------
         Step("5/5", "删除程序文件");
         var failed = new List<string>();
+        var notes = new List<string>();
         foreach (string d in installDirs)
         {
-            if (TryDeleteDir(d, out string why3)) Console.WriteLine($"        已删除 {d}");
+            if (TryDeleteDir(d, out string why3))
+            {
+                // 目录本身没了，但可能留下需重启清理的临时残留，要如实告知
+                if (!string.IsNullOrEmpty(why3)) notes.Add(why3);
+                Console.WriteLine($"        已删除 {d}");
+                Console.WriteLine($"        目录已不存在：{(Directory.Exists(d) ? "否" : "是")}");
+            }
             else
             {
                 failed.Add($"{d}（{why3}）");
@@ -205,6 +335,13 @@ internal static class Uninstaller
             Console.WriteLine("  提示：重启后再运行一次本程序通常就能删干净。");
         }
 
+        // 需要重启才能清理的残留（正在运行的卸载程序自己删不掉自己）
+        foreach (string n in notes)
+        {
+            Console.WriteLine();
+            Console.WriteLine("  说明：" + n);
+        }
+
         if (_keepData && dataExists)
         {
             Console.WriteLine();
@@ -213,6 +350,8 @@ internal static class Uninstaller
         }
 
         Console.WriteLine();
+        // 交互模式下先按键再退出：给清理助手留出"等父进程结束"的时间，
+        // 用户看完提示再关窗口，安装目录就已经被助手删掉了。
         Pause();
         return failed.Count == 0 ? 0 : 2;
     }
@@ -415,55 +554,140 @@ internal static class Uninstaller
     /// <summary>
     /// 删除目录。
     ///
-    /// 关键难点：**卸载程序自己可能就在这个目录里**，
-    /// Windows 不允许删除正在运行的可执行文件。
-    /// 对策分三级，逐级降级：
-    ///   1. 直接递归删除（卸载程序在别处时走这条，最干净）
-    ///   2. 把整个目录**改名挪走**到临时目录，再从临时目录删
-    ///      （改名不受"文件正在使用"限制，只要不跨卷）
-    ///   3. 登记到注册表 PendingFileRenameOperations，重启时由系统删除
+    /// 关键难点：**卸载程序自己就在这个目录里**，
+    /// Windows 不允许删除或改名正在运行的可执行文件。
+    ///
+    /// 所以先做「两阶段删除」：把**除自己以外**的东西全删掉，
+    /// 这一步一定能成功（那些文件没被占用）。此时目录里只剩卸载程序自己。
+    /// 接着分三级处理这个"只剩下自己"的目录：
+    ///   1. 直接删（卸载程序不在这个目录里时走这条，最干净）
+    ///   2. 改名挪到临时目录 —— 整体 rename 不受"文件被占用"限制
+    ///      （只要不跨卷）。挪完安装目录立刻就不存在了。
+    ///      留在临时目录的那份登记重启后删除。
+    ///   3. 登记 RunOnce，重启后由系统删除
+    ///
+    /// 早期版本在这里犯过错：挪走之后删临时副本失败，却仍然返回 true，
+    /// 结果用户看到"卸载完成"，但安装目录（或临时目录）里还留着 34 MB 的卸载程序。
+    /// 现在**如实返回是否还有残留**，并把残留位置告诉用户。
     /// </summary>
     private static bool TryDeleteDir(string dir, out string error)
     {
         error = "";
         if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir)) return true;
 
-        // ---- 第 1 级：直接删 ----
+        // ---- 阶段 1：先删掉除自己以外的所有内容 ----
+        string? selfPath = null;
+        try
+        {
+            string self = Environment.ProcessPath ?? "";
+            if (!string.IsNullOrEmpty(self) &&
+                self.StartsWith(dir.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
+                selfPath = self;
+        }
+        catch { }
+
+        try
+        {
+            foreach (string sub in Directory.GetDirectories(dir))
+            {
+                try { Directory.Delete(sub, true); } catch { /* 留到下一阶段 */ }
+            }
+            foreach (string file in Directory.GetFiles(dir))
+            {
+                if (selfPath is not null &&
+                    string.Equals(file, selfPath, StringComparison.OrdinalIgnoreCase))
+                    continue;   // 跳过自己，删不掉
+                try { File.Delete(file); } catch { /* 留到下一阶段 */ }
+            }
+        }
+        catch { }
+
+        // 目录已空（说明自己不在这个目录里），直接删掉即可
         try
         {
             Directory.Delete(dir, true);
             return true;
         }
-        catch (Exception ex1) { error = ex1.Message; }
+        catch (Exception ex1)
+        {
+            error = ex1.Message;
+            Diag($"阶段2 直接删除失败：{ex1.GetType().Name}: {ex1.Message}");
+        }
 
-        // ---- 第 2 级：改名挪走再删 ----
+        // ---- 阶段 3：自己就是删不掉的那个 → 交给"清理助手"副本 ----
+        //
+        // 实测结论：只要卸载程序自己还在安装目录里，就**没有任何就地办法**
+        // 能删掉这个目录——删目录被占用、改目录名被占用、
+        // 把自己的 exe 改名后进程仍从原路径执行，照样被占用。
+        //
+        // 唯一可行的路：把副本放到临时目录，用它去删安装目录，自己立即退出。
         try
         {
-            string graveyard = Path.Combine(Path.GetTempPath(),
-                "ScreenTime-uninstall-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            Directory.Move(dir, graveyard);
-            try
+            string? self = Environment.ProcessPath;
+            if (self is not null)
             {
-                Directory.Delete(graveyard, true);
-                error = "";
-                return true;
-            }
-            catch (Exception)
-            {
-                // 挪走了但删不掉：至少原位置干净了。登记重启删除。
-                ScheduleDeleteOnReboot(graveyard);
-                error = "";
+                string scratchDir = Path.Combine(Path.GetTempPath(),
+                    "ScreenTime-uninstall-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(scratchDir);
+                string helper = Path.Combine(scratchDir, Path.GetFileName(self));
+                File.Copy(self, helper, true);
+
+                var psi = new ProcessStartInfo(helper)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    // 工作目录**不能**设成 scratchDir：Windows 会锁住进程的当前目录，
+                    // 导致清理助手随后删不掉自己所在的这个目录
+                    // （实测报 "being used by another process"）。
+                    // 设成临时目录根部，两边互不占用。
+                    WorkingDirectory = Path.GetTempPath(),
+                };
+                psi.ArgumentList.Add("--cleanup-worker");
+                psi.ArgumentList.Add(dir);
+                psi.ArgumentList.Add(Environment.ProcessId.ToString());
+
+                Process.Start(psi);
+                Diag($"阶段3 已启动清理助手：{helper} 目标={dir}");
+
+                error = "安装目录将在本窗口关闭后由清理助手删除";
                 return true;
             }
         }
-        catch (Exception ex3) { error = ex3.Message; }
+        catch (Exception ex3)
+        {
+            Diag($"阶段3 启动清理助手失败：{ex3.GetType().Name}: {ex3.Message}");
+            error = ex3.Message;
+        }
 
-        // ---- 第 3 级：登记重启后删除 ----
-        if (ScheduleDeleteOnReboot(dir)) { error = "已登记为重启后删除"; return true; }
+        // ---- 阶段 4：兜底，登记重启后删除 ----
+        if (ScheduleDeleteOnReboot(dir))
+        {
+            Diag($"阶段4 登记 RunOnce：{dir}");
+            error = "安装目录中的程序文件已删除；卸载程序自身被系统占用（正在运行），" +
+                    "无法立即删除，已登记为下次登录时自动清理：" + dir;
+            return true;
+        }
         return false;
     }
 
     // ================= 重启后删除 =================
+
+    /// <summary>
+    /// 诊断日志。卸载过程一旦出问题，用户很难描述清楚现象，
+    /// 所以把关键步骤的成败与异常原文写到文件里，
+    /// 便于事后定位（写到临时目录，因为安装目录可能已经不存在了）。
+    /// </summary>
+    private static void Diag(string message)
+    {
+        try
+        {
+            string path = Path.Combine(Path.GetTempPath(), "ScreenTime-uninstall.log");
+            File.AppendAllText(path,
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}",
+                new UTF8Encoding(false));
+        }
+        catch { }
+    }
 
     private const string RunOnceKey = @"Software\Microsoft\Windows\CurrentVersion\RunOnce";
 
@@ -478,14 +702,21 @@ internal static class Uninstaller
         try
         {
             string cmd = $"cmd.exe /c rd /s /q \"{dir}\"";
-            using Microsoft.Win32.RegistryKey key =
+            using Microsoft.Win32.RegistryKey? key =
                 Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunOnceKey, true);
+            if (key is null)
+            {
+                Diag($"登记 RunOnce 失败：CreateSubKey 返回 null（{RunOnceKey}）");
+                return false;
+            }
             key.SetValue("ScreenTimeCleanup_" + Guid.NewGuid().ToString("N").Substring(0, 6),
                          cmd, Microsoft.Win32.RegistryValueKind.String);
+            Diag($"登记 RunOnce 成功：{cmd}");
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            Diag($"登记 RunOnce 异常：{ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
