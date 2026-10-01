@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenTime.Core", "src\Scre
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenTime.App", "src\ScreenTime.App\ScreenTime.App.csproj", "{F62408C4-71DF-4DBB-A229-3FAC7AA3808C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Uninstaller", "installer\Uninstaller.csproj", "{AA9DEDB9-5139-4A26-B733-5B0918A427CA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Installer", "installer\Installer.csproj", "{9B1D5BE6-0AC1-40E9-8B78-512D884FF4F7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,6 +30,14 @@ Global
 		{F62408C4-71DF-4DBB-A229-3FAC7AA3808C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F62408C4-71DF-4DBB-A229-3FAC7AA3808C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F62408C4-71DF-4DBB-A229-3FAC7AA3808C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AA9DEDB9-5139-4A26-B733-5B0918A427CA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AA9DEDB9-5139-4A26-B733-5B0918A427CA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AA9DEDB9-5139-4A26-B733-5B0918A427CA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AA9DEDB9-5139-4A26-B733-5B0918A427CA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9B1D5BE6-0AC1-40E9-8B78-512D884FF4F7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9B1D5BE6-0AC1-40E9-8B78-512D884FF4F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9B1D5BE6-0AC1-40E9-8B78-512D884FF4F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9B1D5BE6-0AC1-40E9-8B78-512D884FF4F7}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{2497E691-8654-4626-A78B-8438AFB3A8AF} = {E8BF2CEB-FF96-4DD4-93DC-DD3C02D0955A}

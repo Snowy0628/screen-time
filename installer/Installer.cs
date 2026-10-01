@@ -8,8 +8,9 @@
 //      所以安装时必须显式把整个安装目录设回中完整性。
 //   2. 需要正确创建工作目录之外的快捷方式与开机自启项。
 //
-// 安装位置刻意选在 %LOCALAPPDATA%\ScreenTimeApp：
+// 安装位置刻意选在 %USERPROFILE%\ScreenTimeApp（或 %LOCALAPPDATA%\ScreenTimeApp）：
 //   这是用户自己的目录，无需管理员权限，且没有低完整性标签。
+//   两者都可行，实际沿用已存在的那个，避免升级时装成两份。
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -21,12 +22,41 @@ internal static class Installer
     private const string AppFolderName = "ScreenTimeApp";
     private const string ExeName = "ScreenTime.App.exe";
     private const string DisplayName = "屏幕使用时间";
+    private const string UninstallerName = "卸载.exe";
 
     private static string InstallDir = DefaultInstallDir;
 
-    private static string DefaultInstallDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     AppFolderName);
+    /// <summary>
+    /// 安装位置。
+    ///
+    /// 为什么用 %USERPROFILE% 而不是 %LOCALAPPDATA%：
+    /// 两者都能避免桌面的低完整性标签问题，但实测部署脚本与用户机器上
+    /// 一直是 %USERPROFILE%\ScreenTimeApp。曾经这里写成 %LOCALAPPDATA%，
+    /// 与部署脚本不一致，会出现"装了两份、只删掉一份"的混乱。
+    /// 现在统一为 %USERPROFILE%，同时**升级时优先沿用已存在的旧位置**，
+    /// 避免老用户升级后变成两份安装。
+    /// </summary>
+    private static string DefaultInstallDir
+    {
+        get
+        {
+            string userProfile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), AppFolderName);
+            string localAppData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppFolderName);
+
+            // 旧位置有程序文件 → 就地升级，不要另起一份
+            try
+            {
+                if (!Directory.Exists(userProfile) &&
+                    File.Exists(Path.Combine(localAppData, ExeName)))
+                    return localAppData;
+            }
+            catch { }
+
+            return userProfile;
+        }
+    }
 
     private static string DataDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -151,6 +181,44 @@ internal static class Installer
         CreateShortcut(Path.Combine(desktop, DisplayName + ".lnk"), exePath, InstallDir, "", 1);
         Console.WriteLine($"        桌面：{DisplayName}.lnk");
 
+        // 写下"已安装"标记。
+        // 卸载程序靠它区分「真正的安装目录」与「解压出来的分发包 app\ 目录」——
+        // 两者的文件几乎一样，没有标记的话，用户运行分发包里的卸载程序
+        // 会把整个分发包删掉。
+        try
+        {
+            string marker = Path.Combine(InstallDir, ".installed");
+            File.WriteAllText(marker,
+                $"installed={DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
+                $"version={typeof(Installer).Assembly.GetName().Version}\n" +
+                $"from={AppContext.BaseDirectory}\n",
+                new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"        [提示] 写入安装标记失败（不影响使用）：{ex.Message}");
+        }
+
+        // 卸载入口：Start Menu 里放一个，比"让用户去安装目录找卸载.exe"友好得多。
+        // 没有 Start Menu 快捷方式的话，普通用户根本不知道该怎么卸载。
+        string uninstallerPath = Path.Combine(InstallDir, UninstallerName);
+        if (File.Exists(uninstallerPath))
+        {
+            try
+            {
+                string programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+                string menuDir = Path.Combine(programs, DisplayName);
+                Directory.CreateDirectory(menuDir);
+                CreateShortcut(Path.Combine(menuDir, "卸载 " + DisplayName + ".lnk"),
+                               uninstallerPath, InstallDir, "", 1);
+                Console.WriteLine($"        开始菜单：{DisplayName} › 卸载 {DisplayName}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"        [提示] 开始菜单快捷方式创建失败（不影响使用）：{ex.Message}");
+            }
+        }
+
         // ---------- 5. 开机自启 ----------
         Step("5/6", "设置开机自动启动");
         string startup = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
@@ -197,7 +265,10 @@ internal static class Installer
         Console.WriteLine();
         Console.WriteLine($"  程序位置：{InstallDir}");
         Console.WriteLine($"  数据位置：{DataDir}");
-        Console.WriteLine("  卸载：结束进程后删除上面两个文件夹，并删除桌面/启动里的快捷方式。");
+        Console.WriteLine();
+        Console.WriteLine("  卸载：双击安装目录里的「" + UninstallerName + "」，");
+        Console.WriteLine($"        或从开始菜单打开「{DisplayName} › 卸载 {DisplayName}」。");
+        Console.WriteLine("        卸载程序会列出所有痕迹并让你选择是否保留使用记录。");
         Console.WriteLine();
         Console.WriteLine("  按任意键关闭本窗口 ...");
         try { Console.ReadKey(true); } catch { }

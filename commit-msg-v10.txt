@@ -1,0 +1,36 @@
+v1.0：正式版
+
+新增
+- installer/Uninstaller.cs：专门的卸载程序（卸载.exe）
+  · 先扫描并列出所有痕迹，用户确认后才动手
+  · 让用户选择是否保留使用记录（usage.db）
+  · 自删处理：卸载程序自己就在要删的目录里，Windows 不允许删除正在运行的文件，
+    因此分三级降级——直接删 → 改名挪到临时目录再删 → 登记 RunOnce 重启后删除
+  · 计划任务删除走 Task Scheduler COM，不用 schtasks.exe
+    （受限环境禁止子进程命名管道，捕获输出会永久挂起）
+- 安装程序创建开始菜单入口「屏幕使用时间 › 卸载 屏幕使用时间」
+
+修正
+- 安装目录不一致：Installer.cs 写的是 %LOCALAPPDATA%\ScreenTimeApp，
+  而部署脚本用的是 %USERPROFILE%\ScreenTimeApp，会出现"装了两份、只删掉一份"。
+  统一为 %USERPROFILE%，并在升级时优先沿用已存在的旧位置
+- 安装/卸载程序共用 installer\obj\ 导致 singlefilehost.exe 互相抢占
+  （随机报"请求的操作无法在使用用户映射区域打开的文件上执行"）
+- 两个安装程序项目在同一目录，SDK 默认把对方的 .cs 也编译进来
+  （报"定义了多个入口点"），显式 Compile Remove
+- tools/upload-release-asset.ps1 里硬编码了访问令牌，
+  被 GitHub 推送保护拦下（GH013: Push cannot contain secrets）。
+  改为从环境变量 GITHUB_TOKEN 或参数读取，凭据绝不进仓库
+- .gitignore 漏掉 .ib/ .ub/，导致两个 33 MB 的发布 exe 被误提交
+
+版本号统一为 1.0
+
+规避的坑（记在 installer/README-安装说明.md）
+- 卸载程序判断"哪个目录是安装目录"不能用"存在 ScreenTime.App.exe"：
+  分发包的 app\ 里也有它，会把整个分发包删掉。
+  也不能用"存在 卸载.exe"：为了让安装包自带卸载入口，app\ 里现在也有它。
+  最终由安装程序写入标记文件 .installed，卸载程序只认这个标记
+  （并兼容无标记的老版本安装）
+- BaseIntermediateOutputPath 必须指向项目目录之外：
+  SDK 只自动排除「项目目录下的 obj\」，指到 installer\obj\Installer\ 反而
+  会让生成的 AssemblyInfo.cs 被当成源码再编译，报一堆"特性重复"（CS0579）

@@ -9,11 +9,22 @@ obj/
 *.suo
 .vs/
 
+# 安装/卸载程序项目的中间目录被刻意挪到项目之外（见 installer/*.csproj 的说明），
+# 这两个必须忽略，否则生成的 AssemblyInfo.cs 会被当成源码再编译一次（CS0579）
+.obj/
+
 # ---- 发布产物与安装包（体积大，且可由源码重新生成）----
 dist/
 package/
 installer/bin/
 installer/obj/
+
+# 安装/卸载程序的发布输出目录（曾经因为漏了这两条，
+# 把两个 33 MB 的 exe 误提交进仓库，被 GitHub 推送保护拦下）
+.ib/
+.ub/
+.ub2/
+.mockinstall/
 
 # ---- 本地 NuGet 缓存与工具目录 ----
 .nugetpackages/
