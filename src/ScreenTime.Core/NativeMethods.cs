@@ -64,13 +64,53 @@ internal static class NativeMethods
     internal static extern uint GetTickCount();
 
     /// <summary>
-    /// 查询用户通知状态。用于判断"是否有全屏应用在运行"——
-    /// 全屏看视频/玩游戏时人还在电脑前，不该判为空闲。
-    /// 返回值：2=全屏应用 3=全屏 D3D 4=演示模式 5=正常 6=安静时间 等。
-    /// 失败返回负的 HRESULT。
+    /// ~~SHQueryUserNotificationState~~ —— **已弃用，不要再用**。
+    ///
+    /// 它曾被用来判断"是否有全屏应用在运行"，但实测会在运行约 90 秒后
+    /// 抛 AccessViolationException（事件日志：
+    /// `Application Error 0xc0000005`，栈顶就是这个函数）。
+    /// 这类异常在 .NET 里**无法被 catch 捕获**，进程直接死亡——
+    /// 用户看到的现象就是"挂到托盘没多久就自己关了"。
+    ///
+    /// 该 API 在 Windows 11 上本就不稳定（会话切换、explorer 重载、
+    /// 无 shell 等情况下都可能崩），而它在采集循环里是**每秒调用一次**，
+    /// 命中概率被放大。现已改用窗口几何判定，见 IsForegroundWindowFullscreen()。
     /// </summary>
-    [DllImport("shell32.dll")]
-    internal static extern int SHQueryUserNotificationState();
+    // [DllImport("shell32.dll")]
+    // internal static extern int SHQueryUserNotificationState();
+
+    // ---- 全屏判定（只用稳定的窗口 API）----
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;   // 显示器完整矩形
+        public RECT rcWork;      // 工作区（排除任务栏）
+        public uint dwFlags;
+    }
+
+    internal const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MONITORINFO lpmi);
 
     // ---- 电源 / 显示状态通知 ----
 

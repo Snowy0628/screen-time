@@ -2,7 +2,7 @@
 #
 # Usage:
 #   $env:GITHUB_TOKEN = 'github_pat_xxx'
-#   pwsh -File tools/create-release.ps1 -Tag v1.2 -Notes tools\release-notes-v1.2.md -Asset package\ScreenTime-v1.2-Setup.zip
+#   pwsh -File tools/create-release.ps1 -Tag v1.3 -Notes tools\release-notes-v1.3.md -Asset package\ScreenTime-v1.3-Setup.zip
 #
 # The token is read from the environment and never written into the repo
 # (GitHub Push Protection rejects any commit containing a PAT).

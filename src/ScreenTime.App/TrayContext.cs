@@ -33,6 +33,9 @@ internal sealed class TrayContext : IDisposable
     private uint _wmTaskbarCreated;
     private TaskbarWatcherWindow? _taskbarWatcher;
 
+    /// <summary>本次运行的唯一标识，用于心跳文件判断"上次是不是异常结束"。</summary>
+    private readonly string _runToken = Guid.NewGuid().ToString("N").Substring(0, 8);
+
     /// <summary>本实例的启动时刻，用于判断接管请求是不是发给自己的。</summary>
     private readonly DateTime _startedUtc = DateTime.UtcNow;
 
@@ -699,6 +702,15 @@ internal sealed class TrayContext : IDisposable
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             if (!_paused) _recorder.Tick(now);
 
+            // 心跳：记录"我还活着"。
+            //
+            // 用途与 boot-history.log 互补：那个记录**启动**，这个记录**存活**。
+            // 两者结合就能区分"从没启动过"和"启动了但中途异常死亡"——
+            // 后者正是 AccessViolationException 这类无法捕获的崩溃的表现
+            // （异常处理拦不住，进程直接消失，日志里没有任何退出记录）。
+            // 写一行只有几十字节，每秒一次的开销可以忽略。
+            WriteHeartbeat(now);
+
             // 另一个实例请求接管（用户又双击了一次快捷方式）。
             // 唤醒消息在受限会话里可能送不到，所以用文件传递请求作为兜底。
             if (CheckTakeoverRequest()) return;
@@ -724,8 +736,24 @@ internal sealed class TrayContext : IDisposable
         }
         catch (Exception ex)
         {
+            // 注意：这里拦不住 AccessViolationException / StackOverflowException——
+            // .NET 有意让它们直接终止进程（内存已损坏，继续运行更危险）。
+            // 所以对那类崩溃只能靠"不触发它"，而不是靠捕获。
             _log.Error($"采集循环异常: {ex}");
         }
+    }
+
+    /// <summary>
+    /// 记录一次心跳（含本次运行是否属于"异常结束后的重启"）。
+    /// </summary>
+    private void WriteHeartbeat(long now)
+    {
+        try
+        {
+            string path = Path.Combine(AppPaths.DataDirectory, "heartbeat.txt");
+            File.WriteAllText(path, $"{now}\n{_runToken}\n", new System.Text.UTF8Encoding(false));
+        }
+        catch { }
     }
 
     private void UpdateTray()

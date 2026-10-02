@@ -78,3 +78,6 @@ desktop.ini
 
 # 临时提交信息
 commit-msg*.txt
+
+# 监控与临时输出
+assets/_*

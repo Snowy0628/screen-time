@@ -378,20 +378,60 @@ $ schtasks /Run /TN ScreenTimeAutoStart      # 模拟登录触发
 **问题**：只按 `GetLastInputInfo`（键鼠空闲）判定，看视频、上网课、玩游戏时
 长时间不碰键鼠会被误记为「空闲」，导致"真正在使用"的统计严重偏低。
 
-**修法**：叠加 `SHQueryUserNotificationState` 判断是否存在全屏应用：
-
-| 返回值 | 含义 | 判定 |
-|---|---|---|
-| 2 | 全屏应用运行中（F11 全屏、视频等） | 视为**活跃** |
-| 3 | 全屏 D3D 程序（多数游戏） | 视为**活跃** |
-| 4 | 演示模式 | 视为**活跃** |
-| 5 | 正常（未全屏） | 按键鼠空闲判定 |
+**修法**：叠加一次「前台窗口是否占满整个显示器」的判定。
 
 ```
-IsIdle() = 无输入超过阈值 && 没有全屏应用
+IsIdle() = 无输入超过阈值 && 前台窗口没有占满显示器
 ```
 
 设置面板里可关闭这一行为（「全屏应用算作『正在使用』」）。
+
+### ⚠️ 全屏判定的实现换过一次，原因值得记下来
+
+**第一版用 Windows 官方的 `SHQueryUserNotificationState()`**，按返回值 2/3/4
+（全屏应用 / 全屏 D3D / 演示模式）判断。它能用，但**会在运行约 90 秒后崩溃**：
+
+```
+事件日志（应用程序）：
+  [.NET Runtime]      System.AccessViolationException:
+                      Attempted to read or write protected memory.
+                      at ScreenTime.Core.NativeMethods.SHQueryUserNotificationState()
+                      at ScreenTime.Core.IdleWatcher.IsFullscreenAppRunning()
+                      at ScreenTime.Core.Recorder.SampleNow()
+                      at ScreenTime.App.TrayContext.OnTick()      ← 每秒的采集循环
+  [Application Error] Exception code: 0xc0000005
+```
+
+**这类异常在 .NET 里无法被 `catch` 捕获**——它表示内存已损坏，CLR 有意让进程
+直接终止（继续运行更危险），所以 `OnTick` 外面那层 `try/catch` 完全拦不住。
+用户看到的现象就是**"挂到托盘没多久，程序自己就关了"**，而且 `crash.log`
+里什么都没有、`app.log` 也没有任何退出记录。
+
+根因是该 API 在 Windows 11 上本就不够稳定（会话切换、explorer 重载、
+无 shell 时都可能出错），而它在采集循环里**每秒被调用一次**，命中概率被放大。
+
+**第二版改用窗口几何判定**，只依赖四个从 Windows 2000 就存在、
+极其稳定的 API：
+
+```
+GetForegroundWindow()                 取前台窗口
+GetWindowRect()                       取它的矩形
+MonitorFromWindow(MONITOR_DEFAULTTONEAREST)   找它所在的显示器
+GetMonitorInfoW()                     取该显示器的完整矩形
+```
+
+判据：**前台窗口矩形覆盖它所在显示器的完整矩形**（2 像素容差，
+因为部分全屏窗口的矩形会与显示器差一两个像素）。
+用「显示器完整矩形」而不是「工作区」，这样最大化窗口（不覆盖任务栏）
+不会被误判成全屏。
+
+注意结构体必须先填 `cbSize` —— `MONITORINFO` 靠它判断版本，
+填错会写坏内存，这正是"结构体没初始化就传给 Win32"的经典陷阱。
+
+**额外的诊断手段**：程序每次启动往 `boot-history.log` 追加一行，
+采集循环每秒往 `heartbeat.txt` 写一次时间戳。
+两者结合就能区分三种情况——从没启动过 / 启动了但中途异常死亡 /
+正常运行；单看进程列表是分不出来的。
 
 ## 时间轴分格与横轴起点
 
@@ -604,7 +644,7 @@ if (m.WaitOne(0)) return m;          // 立即拿到 → 我是唯一实例
 
 ## 开发状态
 
-功能已完整实现并发布 **v1.2**。后续可做的方向：
+功能已完整实现并发布 **v1.3**。后续可做的方向：
 
 - 首次运行引导（现在装完直接就是主界面，缺少上手说明）
 - 数据导出（把使用记录导成 CSV / 图片，方便分享）
