@@ -65,7 +65,18 @@ if ($existing) {
 }
 Write-Host "  page: $($rel.html_url)"
 
-# Remove any same-named asset first (GitHub rejects duplicates).
+# Remove a same-named asset first (GitHub rejects duplicates on one release).
+#
+# NOTE: this only ever touches the SAME release (same tag) and the SAME file
+# name - it is re-uploading that one asset. It never walks other releases.
+#
+# POLICY (do not change without asking the user):
+#   Past releases and their installer assets are kept on GitHub permanently.
+#   Never delete an older release or an older tag when shipping a new version -
+#   the user explicitly asked to retain historical installers, and deleted
+#   release assets are NOT recoverable (they live only on GitHub's servers).
+#   Old packages are also no longer kept locally, so a deleted asset is gone
+#   for good.
 $name = Split-Path $Asset -Leaf
 foreach ($a in $rel.assets) {
     if ($a.name -eq $name) {
