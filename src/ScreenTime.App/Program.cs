@@ -288,6 +288,43 @@ internal static class Program
                         }
                     }
 
+                case "--idlecheck":
+                    {
+                        // 空闲判定诊断：打印当前为什么被判为「活跃」或「空闲」。
+                        //
+                        // 用户很难自己判断"我这个窗口到底算不算全屏/最大化"，
+                        // 而这个判定直接决定时间轴里那段是"前台使用"还是"空闲"。
+                        // 有了这个命令，遇到"明明是看视频却被记成空闲"时
+                        // 可以直接看出来是哪一环没匹配上。
+                        ConsoleHelper.Ensure();
+                        Console.WriteLine("=== 空闲判定诊断 ===");
+                        try
+                        {
+                            var probe = new ScreenTime.Core.IdleWatcher
+                            {
+                                IdleThresholdSeconds = AppSettings.Current.IdleThresholdSeconds,
+                                TreatFullscreenAsActive = AppSettings.Current.FullscreenCountsAsActive,
+                            };
+                            Console.WriteLine($"  空闲阈值        : {probe.IdleThresholdSeconds} 秒");
+                            Console.WriteLine($"  全屏算作活跃    : {(probe.TreatFullscreenAsActive ? "是" : "否")}");
+                            Console.WriteLine($"  距上次键鼠输入  : {probe.IdleSeconds()} 秒");
+                            Console.WriteLine();
+                            foreach (string line in ScreenTime.Core.IdleWatcher.DescribeForeground())
+                                Console.WriteLine("  " + line);
+                            Console.WriteLine();
+                            Console.WriteLine($"  是否判为空闲    : {(probe.IsIdle() ? "是（这段会记为空闲）" : "否（这段记为前台使用）")}");
+                            Console.WriteLine();
+                            Console.WriteLine("  提示：把一个窗口最大化或全屏，再运行一次本命令，");
+                            Console.WriteLine("        可以看到「覆盖工作区」是否变成 True。");
+                            return 0;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[异常] {ex}");
+                            return 2;
+                        }
+                    }
+
                 case "--rangetest":
                     {
                         // 周/月视图自检。这两个视图曾因一个自递归方法抛

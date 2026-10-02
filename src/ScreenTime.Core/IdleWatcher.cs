@@ -38,24 +38,30 @@ public sealed class IdleWatcher
     }
 
     /// <summary>
-    /// 当前是否有全屏应用占据屏幕（视频播放器、游戏、全屏浏览器等）。
+    /// 当前是否有应用占据屏幕（全屏或最大化），且不是桌面/任务栏本身。
     ///
-    /// **实现方式换过一次，原因值得记下来。**
+    /// **实现方式换过两次，原因都值得记下来。**
     ///
-    /// 最早用 Windows 官方的 SHQueryUserNotificationState()，它在采集循环里
+    /// 第一版用 Windows 官方的 SHQueryUserNotificationState()，它在采集循环里
     /// 每秒被调用一次，运行约 90 秒后抛 AccessViolationException——
     /// 事件日志里是 `Application Error 0xc0000005`，栈顶正是那个函数。
     /// 这类异常在 .NET 里**无法被 catch 捕获**，进程直接死亡，
     /// 用户看到的现象就是"挂到托盘没多久就自己关了"。
     ///
-    /// 现在改用**窗口几何判定**，只依赖 GetForegroundWindow / GetWindowRect /
-    /// MonitorFromWindow / GetMonitorInfoW 这几个从 Windows 2000 就存在、
-    /// 极其稳定的 API：
-    ///   前台窗口矩形 覆盖 它所在显示器的完整矩形 → 认为处于全屏
+    /// 第二版改用窗口几何判定，但只比较 **rcMonitor（显示器完整矩形）**，
+    /// 于是"最大化窗口"和"无边框全屏"（窗口全屏，如 PotPlayer / 网页视频全屏）
+    /// 都被判成"没全屏"。它们只覆盖 **rcWork（工作区，不含任务栏）**：
     ///
-    /// 用 2 像素容差，因为部分全屏窗口的矩形会与显示器差一两个像素。
-    /// 判据是"覆盖整个显示器"而非"覆盖工作区"，
-    /// 这样最大化窗口（不覆盖任务栏）不会被误判成全屏。
+    ///   实测：最大化窗口  矩形 2048x1104
+    ///         显示器完整矩形 2048x1152   ← 覆盖不到，旧判据 False
+    ///         显示器工作区   2048x1104   ← 正好覆盖
+    ///
+    /// 结果就是"窗口化全屏看视频会被记成空闲"。现在两种都算：
+    /// 覆盖工作区（最大化 / 无边框全屏）**或** 覆盖完整显示器（F11 真全屏）。
+    ///
+    /// 另外必须**排除桌面与任务栏**：Progman / WorkerW（桌面）和
+    /// Shell_TrayWnd（任务栏）的矩形同样覆盖屏幕，但它们不代表"在用某个应用"，
+    /// 不排除的话点一下桌面就会被算成活跃，空闲统计直接失效。
     /// </summary>
     public bool IsFullscreenAppRunning()
     {
@@ -63,6 +69,9 @@ public sealed class IdleWatcher
         {
             IntPtr hwnd = NativeMethods.GetForegroundWindow();
             if (hwnd == IntPtr.Zero) return false;
+
+            // 桌面、任务栏不算"在用应用"
+            if (IsShellWindow(hwnd)) return false;
 
             if (!NativeMethods.GetWindowRect(hwnd, out NativeMethods.RECT wr)) return false;
 
@@ -78,10 +87,116 @@ public sealed class IdleWatcher
             if (!NativeMethods.GetMonitorInfoW(mon, ref mi)) return false;
 
             const int tol = 2;
-            return wr.Left <= mi.rcMonitor.Left + tol &&
-                   wr.Top <= mi.rcMonitor.Top + tol &&
-                   wr.Right >= mi.rcMonitor.Right - tol &&
-                   wr.Bottom >= mi.rcMonitor.Bottom - tol;
+
+            // 最大化 / 无边框全屏：覆盖工作区（不含任务栏）
+            bool coversWork =
+                wr.Left <= mi.rcWork.Left + tol &&
+                wr.Top <= mi.rcWork.Top + tol &&
+                wr.Right >= mi.rcWork.Right - tol &&
+                wr.Bottom >= mi.rcWork.Bottom - tol;
+
+            // F11 真全屏：覆盖整个显示器（含任务栏区域）
+            bool coversMonitor =
+                wr.Left <= mi.rcMonitor.Left + tol &&
+                wr.Top <= mi.rcMonitor.Top + tol &&
+                wr.Right >= mi.rcMonitor.Right - tol &&
+                wr.Bottom >= mi.rcMonitor.Bottom - tol;
+
+            return coversWork || coversMonitor;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 诊断用：描述当前前台窗口与空闲判定的依据。
+    /// 供 `--idlecheck` 命令输出，便于用户自查"为什么这段被记成空闲"。
+    /// </summary>
+    public static System.Collections.Generic.List<string> DescribeForeground()
+    {
+        var lines = new System.Collections.Generic.List<string>();
+        try
+        {
+            IntPtr hwnd = NativeMethods.GetForegroundWindow();
+            if (hwnd == IntPtr.Zero)
+            {
+                lines.Add("前台窗口       : 无（可能锁屏或切换中）");
+                return lines;
+            }
+
+            var cls = new System.Text.StringBuilder(128);
+            NativeMethods.GetClassNameW(hwnd, cls, cls.Capacity);
+            var title = new System.Text.StringBuilder(256);
+            NativeMethods.GetWindowTextW(hwnd, title, title.Capacity);
+
+            lines.Add($"前台窗口类名   : {cls}");
+            lines.Add($"前台窗口标题   : {title}");
+
+            bool shell = IsShellWindow(hwnd);
+            lines.Add($"是否桌面/任务栏: {(shell ? "是（不算在使用应用）" : "否")}");
+
+            if (!NativeMethods.GetWindowRect(hwnd, out NativeMethods.RECT wr))
+            {
+                lines.Add("取窗口矩形     : 失败");
+                return lines;
+            }
+            lines.Add($"窗口矩形       : L={wr.Left} T={wr.Top} R={wr.Right} B={wr.Bottom}"
+                      + $"  ({wr.Right - wr.Left}x{wr.Bottom - wr.Top})");
+
+            IntPtr mon = NativeMethods.MonitorFromWindow(hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            var mi = new NativeMethods.MONITORINFO
+            {
+                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFO>(),
+            };
+            if (!NativeMethods.GetMonitorInfoW(mon, ref mi))
+            {
+                lines.Add("取显示器信息   : 失败");
+                return lines;
+            }
+
+            lines.Add($"显示器完整矩形 : {mi.rcMonitor.Right - mi.rcMonitor.Left}x{mi.rcMonitor.Bottom - mi.rcMonitor.Top}"
+                      + "（F11 真全屏的标准）");
+            lines.Add($"显示器工作区   : {mi.rcWork.Right - mi.rcWork.Left}x{mi.rcWork.Bottom - mi.rcWork.Top}"
+                      + "（最大化 / 无边框全屏的标准）");
+
+            const int tol = 2;
+            bool coversWork =
+                wr.Left <= mi.rcWork.Left + tol && wr.Top <= mi.rcWork.Top + tol &&
+                wr.Right >= mi.rcWork.Right - tol && wr.Bottom >= mi.rcWork.Bottom - tol;
+            bool coversMonitor =
+                wr.Left <= mi.rcMonitor.Left + tol && wr.Top <= mi.rcMonitor.Top + tol &&
+                wr.Right >= mi.rcMonitor.Right - tol && wr.Bottom >= mi.rcMonitor.Bottom - tol;
+
+            lines.Add($"覆盖工作区     : {(coversWork ? "True" : "False")}");
+            lines.Add($"覆盖整个显示器 : {(coversMonitor ? "True" : "False")}");
+            lines.Add($"→ 判定占据屏幕 : {(coversWork || coversMonitor ? "是" : "否")}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add("诊断失败：" + ex.Message);
+        }
+        return lines;
+    }
+
+    /// <summary>
+    /// 是否是桌面/任务栏这类"壳窗口"。
+    /// 它们的矩形覆盖整个屏幕，但用户并没有在使用任何应用，必须排除。
+    /// </summary>
+    private static bool IsShellWindow(IntPtr hwnd)
+    {
+        try
+        {
+            var sb = new System.Text.StringBuilder(64);
+            int n = NativeMethods.GetClassNameW(hwnd, sb, sb.Capacity);
+            if (n <= 0) return false;
+
+            string cls = sb.ToString();
+            return cls is "Progman"          // 桌面
+                       or "WorkerW"          // 桌面（壁纸层，部分系统用它）
+                       or "Shell_TrayWnd"    // 主任务栏
+                       or "Shell_SecondaryTrayWnd";  // 副屏任务栏
         }
         catch
         {
