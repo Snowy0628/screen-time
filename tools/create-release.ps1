@@ -18,7 +18,10 @@ param(
     [string]$Title,
     [string]$Repo  = 'Snowy0628/screen-time',
     [string]$Token = $env:GITHUB_TOKEN,
-    [switch]$Prerelease
+    [switch]$Prerelease,
+    # Overwrite an already-published asset. Off by default on purpose - see the
+    # note above the asset block. Only for use before a release is announced.
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,24 +68,38 @@ if ($existing) {
 }
 Write-Host "  page: $($rel.html_url)"
 
-# Remove a same-named asset first (GitHub rejects duplicates on one release).
+# ---- Asset upload ----
 #
-# NOTE: this only ever touches the SAME release (same tag) and the SAME file
-# name - it is re-uploading that one asset. It never walks other releases.
+# A published release is IMMUTABLE: replacing its installer would mean two people
+# who both "downloaded v1.4" can end up with different binaries, and a SHA256
+# they were given earlier no longer matches. Standard practice is to ship a new
+# version number instead of swapping the file.
 #
-# POLICY (do not change without asking the user):
-#   Past releases and their installer assets are kept on GitHub permanently.
-#   Never delete an older release or an older tag when shipping a new version -
-#   the user explicitly asked to retain historical installers, and deleted
-#   release assets are NOT recoverable (they live only on GitHub's servers).
-#   Old packages are also no longer kept locally, so a deleted asset is gone
-#   for good.
+# So an existing same-named asset is a hard error unless -Force is given.
+# -Force exists only for the window BEFORE a release is announced, where
+# re-uploading a corrected build under the same tag is still harmless.
+#
+# POLICY: never delete older releases or older tags. Past installers are kept
+# permanently on GitHub - they exist only on GitHub's servers and are not backed
+# up locally, so deleting one is irreversible (v0.1 / v1.0 / v1.2 / v1.3
+# installers were lost that way).
 $name = Split-Path $Asset -Leaf
-foreach ($a in $rel.assets) {
-    if ($a.name -eq $name) {
-        Write-Host "  removing old asset $($a.name)"
-        Invoke-RestMethod -Uri "$api/repos/$Repo/releases/assets/$($a.id)" -Method Delete -Headers $hdr -TimeoutSec 30
+$existing = $rel.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+
+if ($existing) {
+    if (-not $Force) {
+        Write-Host ''
+        Write-Host "ERROR: release $Tag already has an asset named '$name'."
+        Write-Host '       A published release must not be modified - uploads are immutable.'
+        Write-Host '       Ship a new version instead, e.g.:'
+        Write-Host '         bump <Version> in the three .csproj files, rebuild, then run'
+        Write-Host "         this script with -Tag v<new version>"
+        Write-Host '       (Use -Force only if the release has not been announced yet.)'
+        exit 3
     }
+    Write-Host "  -Force: replacing existing asset $($existing.name)"
+    Invoke-RestMethod -Uri "$api/repos/$Repo/releases/assets/$($existing.id)" `
+        -Method Delete -Headers $hdr -TimeoutSec 30
 }
 
 $sizeMB    = [math]::Round((Get-Item $Asset).Length / 1MB, 1)
