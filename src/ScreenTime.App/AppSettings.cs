@@ -62,6 +62,26 @@ internal sealed class AppSettings
     /// <summary>时间轴分格粒度（分钟）：30 / 60 / 180。</summary>
     public int TimelineBucketMinutes { get; set; } = 60;
 
+    /// <summary>
+    /// 主题配色方案的名字。空字符串 = 默认（蓝紫渐变）。
+    ///
+    /// 存名字而不是存色号，是为了让"预设色"以后能微调色值而不影响已有设置；
+    /// 自定义颜色用 <see cref="CustomAccentHex"/> 单独存。
+    /// </summary>
+    public string AccentPresetName { get; set; } = "";
+
+    /// <summary>
+    /// 用户自定义的强调色，形如 "#66CCFF"。为空表示没设。
+    /// 设了它就以它为准（优先于 <see cref="AccentPresetName"/>）。
+    /// </summary>
+    public string CustomAccentHex { get; set; } = "";
+
+    /// <summary>背景图路径。为空表示不用背景图。</summary>
+    public string BackgroundImagePath { get; set; } = "";
+
+    /// <summary>背景图不透明度（0.0–1.0）。默认偏淡，避免盖过内容。</summary>
+    public double BackgroundImageOpacity { get; set; } = 0.25;
+
     // ---- 读写 ----
 
     private static readonly JsonSerializerOptions JsonOptions = new()

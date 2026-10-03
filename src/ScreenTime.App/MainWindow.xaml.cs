@@ -173,6 +173,11 @@ public partial class MainWindow : Window
 
         ApplyRangeMode();
         LoadSettingsIntoUi();
+
+        // 背景图要在窗口有实际宽度之后再解码，否则 DecodePixelWidth 会用兜底值，
+        // 大图仍然按原尺寸进内存。
+        ApplyBackgroundImage();
+
         Reload();
         _timer.Start();
 
@@ -204,6 +209,18 @@ public partial class MainWindow : Window
             ThemeSystemRadio.IsChecked = s.Theme == AppTheme.System;
             ThemeLightRadio.IsChecked = s.Theme == AppTheme.Light;
             ThemeDarkRadio.IsChecked = s.Theme == AppTheme.Dark;
+
+            // 主题色：生成预设色块，回填自定义输入框
+            BuildAccentSwatches();
+            CustomAccentBox.Text = s.CustomAccentHex ?? "";
+            UpdateCustomAccentPreview();
+
+            // 背景图：回填名称与滑块
+            BgImageName.Text = string.IsNullOrWhiteSpace(s.BackgroundImagePath)
+                ? "未设置"
+                : System.IO.Path.GetFileName(s.BackgroundImagePath);
+            BgOpacitySlider.Value = Math.Clamp(s.BackgroundImageOpacity * 100.0, 0, 100);
+            UpdateBgOpacityLabel();
 
             FullscreenActiveCheck.IsChecked = s.FullscreenCountsAsActive;
 
@@ -340,9 +357,319 @@ public partial class MainWindow : Window
         };
     }
 
-    /// <summary>开机自启勾选：勾上就配置（优先计划任务），取消就清理两种方式。</summary>
-    private void OnAutoStartToggled(object sender, RoutedEventArgs e)
+    // ==================================================================
+    // 主题色
+    // ==================================================================
+
+    /// <summary>
+    /// 生成预设色块。
+    ///
+    /// 用代码生成而不是写死在 XAML 里：每个色块的填充色不同，
+    /// 7 个预设就要复制 7 遍几乎一样的 Border + 事件绑定。
+    /// 颜色数据本来就集中在 ThemeCustomizer.Presets，这里直接读它，
+    /// 以后加/改预设只动一个地方。
+    /// </summary>
+    private void BuildAccentSwatches()
     {
+        AccentSwatchHost.Items.Clear();
+
+        AppSettings s = AppSettings.Current;
+        Color? current = ThemeCustomizer.ResolveCustomColor(s);
+
+        foreach (AccentPreset p in ThemeCustomizer.All)
+        {
+            Color? presetColor = ThemeCustomizer.ParseHex(p.Hex);
+            bool isSelected =
+                (presetColor is null && current is null) ||
+                (presetColor is { } pc && current is { } cc && pc == cc);
+
+            // 默认方案用渐变示例，其余用纯色示例，所见即所得
+            Brush fill;
+            if (p.Name == ThemeCustomizer.DefaultName)
+            {
+                (string gs, string ge) = ThemeCustomizer.DefaultGradient;
+                var lg = new LinearGradientBrush(
+                    ThemeCustomizer.ParseHex(gs) ?? Colors.SteelBlue,
+                    ThemeCustomizer.ParseHex(ge) ?? Colors.MediumPurple,
+                    new Point(0, 0), new Point(1, 1));
+                lg.Freeze();
+                fill = lg;
+            }
+            else
+            {
+                fill = new SolidColorBrush(presetColor ?? Colors.Gray);
+                ((SolidColorBrush)fill).Freeze();
+            }
+
+            // 用 Border 而不是 Button。
+            //
+            // 试过两轮 Button：先套自定义 ControlTemplate（presenter 没绑 Content，
+            // 整排空白），补上 TemplateBinding 后仍然空白——按钮的默认模板里
+            // 有一堆 VisualState / 主题样式，在 ItemsControl 生成的容器里行为
+            // 不好把握。Border 的渲染是确定的：设什么就画什么，没有模板查找
+            // 这一层。反正这里也不需要键盘焦点与按钮语义，Border + 鼠标事件足够。
+            var swatch = new Border
+            {
+                Width = 46,
+                Height = 46,
+                Margin = new Thickness(0, 0, 8, 8),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = p.Name + "　" + p.Hex,
+                Tag = p.Name,
+                Background = fill,
+                CornerRadius = new CornerRadius(8),
+                // 选中的加一圈描边，一眼看出当前用哪个
+                BorderBrush = isSelected
+                    ? (FindResource("TextBrush") as Brush ?? Brushes.Black)
+                    : Brushes.Transparent,
+                BorderThickness = new Thickness(isSelected ? 3 : 0),
+            };
+            swatch.MouseLeftButtonUp += OnAccentPresetClick;
+            AccentSwatchHost.Items.Add(swatch);
+        }
+    }
+
+
+    /// <summary>点色块应用该预设。</summary>
+    private void OnAccentPresetClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not string name) return;
+
+        AppSettings s = AppSettings.Current;
+        s.AccentPresetName = name == ThemeCustomizer.DefaultName ? "" : name;
+        s.CustomAccentHex = "";          // 选预设就清掉自定义，避免两者打架
+        s.Save();
+
+        ThemeCustomizer.Apply(s);
+        BuildAccentSwatches();
+        CustomAccentBox.Text = "";
+        UpdateCustomAccentPreview();
+        SettingsHint.Text = $"主题色已设为「{name}」";
+    }
+
+    private void OnCustomAccentTextChanged(object sender, TextChangedEventArgs e)
+        => UpdateCustomAccentPreview();
+
+    /// <summary>回车等同于点「应用」。</summary>
+    private void OnCustomAccentKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) OnApplyCustomAccent(sender, e);
+    }
+
+    /// <summary>实时显示输入色号的预览与合法性提示。</summary>
+    private void UpdateCustomAccentPreview()
+    {
+        if (CustomAccentBox is null || CustomAccentPreview is null) return;
+
+        string text = CustomAccentBox.Text ?? "";
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            CustomAccentPreview.Background = Brushes.Transparent;
+            CustomAccentHint.Text = "例如 #66CCFF；留空并使用「默认蓝紫」即为渐变方案";
+            return;
+        }
+
+        if (ThemeCustomizer.ParseHex(text) is { } c)
+        {
+            CustomAccentPreview.Background = new SolidColorBrush(c);
+            CustomAccentHint.Text = "色号有效：" + ThemeCustomizer.ToHex(c);
+        }
+        else
+        {
+            CustomAccentPreview.Background = Brushes.Transparent;
+            CustomAccentHint.Text = "色号无效，请填 6 位十六进制，例如 #66CCFF";
+        }
+    }
+
+    private void OnApplyCustomAccent(object sender, RoutedEventArgs e)
+    {
+        string text = CustomAccentBox.Text ?? "";
+        if (ThemeCustomizer.ParseHex(text) is not { } c)
+        {
+            SettingsHint.Text = "色号无效，请填 6 位十六进制，例如 #66CCFF";
+            return;
+        }
+
+        AppSettings s = AppSettings.Current;
+        s.CustomAccentHex = ThemeCustomizer.ToHex(c);
+        s.AccentPresetName = "";         // 自定义优先，清掉预设避免歧义
+        s.Save();
+
+        ThemeCustomizer.Apply(s);
+        BuildAccentSwatches();
+        UpdateCustomAccentPreview();
+        SettingsHint.Text = "主题色已应用：" + ThemeCustomizer.ToHex(c);
+    }
+
+    // ==================================================================
+    // 背景图
+    // ==================================================================
+
+    private void OnPickBackgroundImage(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择背景图片",
+            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp;*.webp|所有文件|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dlg.ShowDialog(this) != true) return;
+
+        AppSettings s = AppSettings.Current;
+        s.BackgroundImagePath = dlg.FileName;
+        if (s.BackgroundImageOpacity <= 0.01) s.BackgroundImageOpacity = 0.25;
+        s.Save();
+
+        BgImageName.Text = System.IO.Path.GetFileName(dlg.FileName);
+        BgOpacitySlider.Value = Math.Clamp(s.BackgroundImageOpacity * 100.0, 0, 100);
+        ApplyBackgroundImage();
+        SettingsHint.Text = "背景图已设置";
+    }
+
+    private void OnClearBackgroundImage(object sender, RoutedEventArgs e)
+    {
+        AppSettings s = AppSettings.Current;
+        s.BackgroundImagePath = "";
+        s.Save();
+
+        BgImageName.Text = "未设置";
+        ApplyBackgroundImage();
+        SettingsHint.Text = "背景图已清除";
+    }
+
+    private void OnBgOpacityChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        UpdateBgOpacityLabel();
+
+        if (_suppressSettingsEvents) return;
+
+        AppSettings s = AppSettings.Current;
+        s.BackgroundImageOpacity = Math.Clamp(BgOpacitySlider.Value / 100.0, 0, 1);
+        s.Save();
+        ApplyBackgroundImage();
+    }
+
+    private void UpdateBgOpacityLabel()
+    {
+        if (BgOpacityText is null || BgOpacitySlider is null) return;
+        BgOpacityText.Text = $"{(int)BgOpacitySlider.Value}%";
+    }
+
+    /// <summary>
+    /// 应用背景图设置。
+    ///
+    /// ### 为什么还要动卡片透明度
+    ///
+    /// 最初只加了"图片 + 遮罩"，结果**背景图完全看不见**——界面上所有卡片用的
+    /// `SurfaceBrush` 是纯白不透明的，把图片整块盖住了。所以有背景图时
+    /// 必须让卡片透一点。
+    ///
+    /// ### 为什么替换画刷而不是设 Opacity
+    ///
+    /// 给卡片元素设 `Opacity` 会**连文字一起变淡**，可读性反而更差。
+    /// 这里改为替换画刷本身：`SurfaceBrush` 换成 alpha≈0.82 的同色画笔，
+    /// 背景透出来、文字（走 `TextBrush`）保持完全不透明。
+    /// 卡片是嵌套的，alpha 逐层叠加、越往里越实，正好让内容区更清晰。
+    ///
+    /// ### 图片解码
+    ///
+    /// 按窗口宽度解码（`DecodePixelWidth`），不直接绑原图——
+    /// 4K 壁纸每次重绘都要缩放会白白吃内存和 CPU。
+    /// </summary>
+    private void ApplyBackgroundImage()
+    {
+        try
+        {
+            AppSettings s = AppSettings.Current;
+            string path = s.BackgroundImagePath ?? "";
+            double opacity = Math.Clamp(s.BackgroundImageOpacity, 0, 1);
+
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path) || opacity <= 0.001)
+            {
+                BgImage.Source = null;
+                BgImage.Opacity = 0;
+                BgVeil.Opacity = 0;
+                SetCardTranslucency(false);
+                return;
+            }
+
+            int decodeW = (int)Math.Max(640, ActualWidth > 0 ? ActualWidth : 1280);
+
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(path, UriKind.Absolute);
+            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;   // 不锁文件，用户可随时删/换
+            bmp.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreImageCache;
+            bmp.DecodePixelWidth = decodeW;
+            bmp.EndInit();
+            bmp.Freeze();
+
+            BgImage.Source = bmp;
+            BgImage.Opacity = opacity;
+
+            // 遮罩：按当前主题压一层底色，让整体对比度更稳。
+            // 用 ThemeManager 的状态推断，不依赖具体 ResourceKey（那会随主题切换失效）。
+            BgVeil.Fill = ThemeManager.IsDark
+                ? new SolidColorBrush(Color.FromRgb(0x14, 0x15, 0x18))
+                : new SolidColorBrush(Color.FromRgb(0xF4, 0xF5, 0xF7));
+            BgVeil.Opacity = 0.25;
+
+            SetCardTranslucency(true);
+        }
+        catch
+        {
+            // 图片损坏/被删/格式不支持：静默退回无背景，不影响使用
+            BgImage.Source = null;
+            BgImage.Opacity = 0;
+            BgVeil.Opacity = 0;
+            SetCardTranslucency(false);
+        }
+    }
+
+    /// <summary>
+    /// 开关卡片半透明。
+    ///
+    /// 覆盖值写进 **RootGrid.Resources** 而不是 Application.Resources：
+    /// 主内容区在 RootGrid 之下，资源查找能找到覆盖值 → 卡片变半透明；
+    /// 设置面板在 RootGrid 的兄弟分支，查找走不进去 → 保持主题里的不透明底色。
+    /// 这正是想要的：半透明只服务"让背景图透出来"，而面板里全是文字控件，
+    /// 透过去会和背后内容糊在一起。
+    /// </summary>
+    private void SetCardTranslucency(bool translucent)
+    {
+        try
+        {
+            if (RootGrid is null) return;
+
+            if (!translucent)
+            {
+                RootGrid.Resources.Remove("SurfaceBrush");
+                RootGrid.Resources.Remove("Surface2Brush");
+                return;
+            }
+
+            bool dark = ThemeManager.IsDark;
+            Color baseColor = dark ? Color.FromRgb(0x1E, 0x20, 0x24) : Color.FromRgb(0xFF, 0xFF, 0xFF);
+
+            // 用带 alpha 的同色：背景透出来，文字（走 TextBrush）仍完全不透明
+            const byte alpha = 205;   // ≈0.80
+            var surface = new SolidColorBrush(Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B));
+            surface.Freeze();
+            var surface2 = new SolidColorBrush(Color.FromArgb((byte)(alpha - 12), baseColor.R, baseColor.G, baseColor.B));
+            surface2.Freeze();
+
+            RootGrid.Resources["SurfaceBrush"] = surface;
+            RootGrid.Resources["Surface2Brush"] = surface2;
+        }
+        catch
+        {
+            // 忽略
+        }
+    }
+
+    /// <summary>开机自启勾选：勾上就配置（优先计划任务），取消就清理两种方式。</summary>
+    private void OnAutoStartToggled(object sender, RoutedEventArgs e)    {
         if (_suppressSettingsEvents) return;
 
         bool want = AutoStartCheck.IsChecked == true;
@@ -552,7 +879,19 @@ public partial class MainWindow : Window
     }
 
     /// <summary>重新计算数据并重建需要动态布局的部分。</summary>
-    private void Reload()
+    private void Reload() => ReloadCore();
+
+    /// <summary>
+    /// 供外部（主题配色）要求界面重新解析 DynamicResource。
+    ///
+    /// 为什么需要：WPF 对 `Application.Resources` 里某个 key 的就地替换
+    /// **不会**通知已经在用的 DynamicResource 引用——只有合并字典被整体
+    /// 换掉时才通知。所以换主题色之后必须主动让界面重走一遍取色，
+    /// 否则要等到切页面才生效。
+    /// </summary>
+    internal void RefreshThemeColors() => ReloadCore();
+
+    private void ReloadCore()
     {
         try
         {
@@ -1241,6 +1580,11 @@ public partial class MainWindow : Window
     private void OnThemeChanged(AppTheme mode)
     {
         UpdateThemeGlyph();
+
+        // 背景图那套东西依赖当前深浅色：遮罩颜色、卡片半透明底色都要跟着换，
+        // 否则深色主题下会留一层白蒙蒙的卡片底。
+        ApplyBackgroundImage();
+
         // 主题变了，依赖取色的柱子需要重画
         Reload();
     }

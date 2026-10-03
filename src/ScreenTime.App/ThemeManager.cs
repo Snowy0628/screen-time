@@ -85,6 +85,12 @@ internal static class ThemeManager
         _currentIsDark = dark;
         SwapDictionary(dark);
 
+        // 必须在换字典**之后**再套用户配色：
+        // 合并新字典会把 AccentBrush / HeroBrush / StateActiveBrush 重置回
+        // 主题文件里的默认值，所以每次深浅色切换都要重新覆盖一次，
+        // 否则用户选的颜色切一次主题就丢了。
+        ThemeCustomizer.Apply(AppSettings.Current);
+
         // 让 Windows 把标题栏也画成深色。
         // 不做这一步，深色主题下标题栏仍是白的，和整个界面割裂。
         ApplyTitleBarTheme(dark);

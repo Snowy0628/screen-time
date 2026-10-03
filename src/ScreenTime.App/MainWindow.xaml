@@ -248,14 +248,42 @@
 
     </Window.Resources>
 
-    <Grid>
+    <!--
+        x:Name 是必要的：设了背景图之后，卡片半透明是通过往这个 Grid 的
+        Resources 里放覆盖值实现的（见 SetCardTranslucency）。
+        放在这里而不是 Application.Resources，是为了让**设置面板**不受影响——
+        面板在下面另一个分支，资源查找走不进来，于是它保持主题里的不透明底色。
+    -->
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>  <!-- 顶栏 -->
             <RowDefinition Height="*"/>     <!-- 内容 -->
         </Grid.RowDefinitions>
 
+        <!--
+            背景图层。必须在所有内容之下，所以放在 RowDefinitions 之后、
+            顶栏之前，并在下面那层内容上用 Panel.ZIndex 抬高。
+
+            三层结构：
+              1. Image      背景图（用户选的照片）
+              2. Rectangle  半透明遮罩——保证内容可读。
+                            浅色主题用白遮罩、深色主题用黑遮罩，
+                            由 ApplyBackgroundImage() 按当前主题设置。
+              3. 内容       现有界面
+
+            图片用 UniformToFill 铺满并裁切，不做平铺（平铺会显得很碎）。
+            另外会把原图预缩放到窗口尺寸再显示，避免每帧缩放 4K 大图。
+        -->
+        <Image x:Name="BgImage" Grid.RowSpan="2"
+               Stretch="UniformToFill" Opacity="0"
+               IsHitTestVisible="False" Panel.ZIndex="0"/>
+
+        <Rectangle x:Name="BgVeil" Grid.RowSpan="2"
+                   Fill="#FFFFFF" Opacity="0"
+                   IsHitTestVisible="False" Panel.ZIndex="1"/>
+
         <!-- ===== 顶栏 ===== -->
-        <Grid Grid.Row="0" Margin="22,18,22,10">
+        <Grid Grid.Row="0" Margin="22,18,22,10" Panel.ZIndex="2">
             <StackPanel Orientation="Horizontal">
                 <Border Width="30" Height="30" CornerRadius="9" Background="{DynamicResource HeroBrush}">
                     <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="15"
@@ -307,7 +335,8 @@
         </Grid>
 
         <!-- ===== 内容 ===== -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="22,0,22,22">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="22,0,22,22"
+                      Panel.ZIndex="2" Background="Transparent">
             <StackPanel>
 
                 <!--
@@ -713,14 +742,22 @@
             做成覆盖层而不是独立窗口：不打断主界面的状态，
             也不需要处理"设置窗口"与主窗口的生命周期关系。
         -->
-        <Grid x:Name="SettingsOverlay" Grid.RowSpan="2" Visibility="Collapsed">
+        <!--
+            Panel.ZIndex 必须明显高于内容区。
+            背景图功能给内容 ScrollViewer 设了 ZIndex=2（为了压在背景图上），
+            面板如果还是默认的 0，**主内容就会画到面板上面**——
+            表现为图表和文字穿透设置面板，面板看起来像坏了。
+            这里给 20，留足余量。
+        -->
+        <Grid x:Name="SettingsOverlay" Grid.RowSpan="2" Panel.ZIndex="20"
+              Visibility="Collapsed">
             <!-- 半透明遮罩：点击空白处关闭 -->
             <Rectangle Fill="#66000000" MouseLeftButtonDown="OnSettingsBackdropClick"/>
 
             <Border x:Name="SettingsCard"
                     Width="470" MaxHeight="680"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Background="{DynamicResource SurfaceBrush}"
+                    Background="{DynamicResource DialogSurfaceBrush}"
                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                     CornerRadius="16" Padding="0">
                 <Border.RenderTransform>
@@ -825,6 +862,88 @@
                                          Margin="0,0,0,10" Tag="2" Checked="OnThemeModeChanged"
                                          Foreground="{DynamicResource TextBrush}"/>
                             <TextBlock Text="选「跟随系统」时，在 Windows 设置里切换深浅色会立即生效"
+                                       FontSize="11" Margin="0,0,0,14" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Text3Brush}"/>
+
+                            <!-- ===== 主题色 ===== -->
+                            <TextBlock Text="主题色" Margin="0,0,0,8"
+                                       Foreground="{DynamicResource TextBrush}"/>
+                            <TextBlock Text="点色块即应用。默认方案是蓝紫渐变；选其它颜色则改为纯色（莫兰迪灰调）"
+                                       FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Text3Brush}"/>
+
+                            <!--
+                                预设色块。按钮由代码生成（见 BuildAccentSwatches），
+                                因为每个色块的填充色不同，写死在 XAML 里要复制 7 遍。
+                            -->
+                            <ItemsControl x:Name="AccentSwatchHost" Margin="0,0,0,10">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="自定义" VerticalAlignment="Center"
+                                           Margin="0,0,8,0"
+                                           Foreground="{DynamicResource TextBrush}"/>
+                                <TextBox x:Name="CustomAccentBox" Grid.Column="1"
+                                         Padding="8,5" VerticalContentAlignment="Center"
+                                         ToolTip="填十六进制色号，例如 #66CCFF 或 66CCFF"
+                                         KeyDown="OnCustomAccentKeyDown"
+                                         TextChanged="OnCustomAccentTextChanged"/>
+                                <Button x:Name="ApplyAccentBtn" Grid.Column="2" Content="应用"
+                                        Style="{StaticResource TextButton}" Margin="6,0,0,0"
+                                        Click="OnApplyCustomAccent"/>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                <Border x:Name="CustomAccentPreview" Width="16" Height="16"
+                                        CornerRadius="4" VerticalAlignment="Center"
+                                        BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1"/>
+                                <TextBlock x:Name="CustomAccentHint" FontSize="11" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Text3Brush}"/>
+                            </StackPanel>
+
+                            <!-- ===== 背景图 ===== -->
+                            <TextBlock Text="背景图" Margin="0,0,0,8"
+                                       Foreground="{DynamicResource TextBrush}"/>
+
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="BgImageName" Grid.Column="0" Text="未设置"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource Text2Brush}"/>
+                                <Button Grid.Column="1" Content="选择图片"
+                                        Style="{StaticResource TextButton}"
+                                        Click="OnPickBackgroundImage"/>
+                                <Button Grid.Column="2" Content="清除"
+                                        Style="{StaticResource TextButton}" Margin="4,0,0,0"
+                                        Click="OnClearBackgroundImage"/>
+                            </Grid>
+
+                            <Grid Margin="0,0,0,6">
+                                <TextBlock Text="不透明度" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextBrush}"/>
+                                <TextBlock x:Name="BgOpacityText" HorizontalAlignment="Right"
+                                           VerticalAlignment="Center" FontSize="11.5"
+                                           Foreground="{DynamicResource Text2Brush}"/>
+                            </Grid>
+                            <Slider x:Name="BgOpacitySlider" Minimum="0" Maximum="100" Value="25"
+                                    TickFrequency="5" IsSnapToTickEnabled="True"
+                                    Margin="0,0,0,4"
+                                    ValueChanged="OnBgOpacityChanged"/>
+                            <TextBlock Text="背景图会降低卡片与文字的可读性，程序会自动提高卡片不透明度作为补偿。建议 20%–40%"
                                        FontSize="11" Margin="0,0,0,14" TextWrapping="Wrap"
                                        Foreground="{DynamicResource Text3Brush}"/>
 

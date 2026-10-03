@@ -1,4 +1,4 @@
-﻿using System.Windows.Media;
+using System.Windows.Media;
 
 // WPF 与 WinForms 都存在 Color，固定用 WPF 的
 using Color = System.Windows.Media.Color;
@@ -54,7 +54,12 @@ internal static class AppPalette
         }
     }
 
-    /// <summary>粗略分类，用于排行的副标题。关键字匹配，命中即返回。</summary>
+    /// <summary>
+    /// 粗略分类，用于排行的副标题。关键字匹配，命中即返回。
+    ///
+    /// **顺序有意义**：先匹配的那条赢。"游戏"放在"娱乐"之前，
+    /// 否则 `steam` 这类两者都沾边的会被娱乐先抢走。
+    /// </summary>
     public static string CategoryOf(string exePath)
     {
         string n = System.IO.Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
@@ -74,12 +79,29 @@ internal static class AppPalette
         if (Match(n, "wechat", "weixin", "qq", "tim", "teams", "slack", "discord", "dingtalk",
                        "telegram", "zoom", "wemeet", "feishu", "lark", "skype"))
             return "沟通";
-        if (Match(n, "steam", "epicgameslauncher", "battle.net", "ubisoftconnect", "wegame",
-                       "genshinimpact", "yuanshen", "spotify", "cloudmusic", "potplayer",
-                       "vlc", "mpc-hc", "bilibili", "douyin", "game"))
+
+        // 游戏。放在"娱乐"之前，因为 steam / 加速器 这类两边都沾。
+        //
+        // 关键字取自实际统计里出现的进程名——那些名字大多看不出是游戏，
+        // 必须逐个补进来，否则永远落在"其他"：
+        //   Client-Win64-Shipping  虚幻引擎打包后的游戏主进程（鸣潮等）
+        //   launcher_main          国产游戏启动器
+        //   KRSDKExternal          游戏内嵌 SDK（鸣潮 third-party 目录）
+        //   uu                     UU 加速器
+        if (Match(n, "client-win64-shipping", "client-win32-shipping", "launcher_main",
+                       "krsdk", "uu", "wegame", "steam", "epicgameslauncher", "battle.net",
+                       "ubisoftconnect", "origin", "eaapp", "gog galaxy", "genshinimpact",
+                       "yuanshen", "wuthering", "mingchao", "deltaforce", "hoyoplay",
+                       "game", "games", "rpg", "fps", "minecraft", "roblox", "valorant",
+                       "league", "cs2", "csgo", "dota", "pubg", "apex", "overwatch"))
+            return "游戏";
+
+        if (Match(n, "spotify", "cloudmusic", "potplayer", "vlc", "mpc-hc", "mpv",
+                       "bilibili", "douyin", "iqiyi", "youku", "qqmusic", "kugou", "foobar2000"))
             return "娱乐";
         if (Match(n, "explorer", "taskmgr", "control", "systemsettings", "calc", "mspaint",
-                       "snippingtool", "notepad", "mmc", "regedit"))
+                       "snippingtool", "mmc", "regedit", "shellhost", "systraycomponent",
+                       "chxsmartscreen", "gamingcenter", "razer", "msiafterburner", "rtss"))
             return "系统";
         if (Match(n, "screentime", "screen")) return "自身";
 

@@ -1181,50 +1181,115 @@ internal sealed class TrayContext : IDisposable
     }
 
     /// <summary>
-    /// 取托盘图标。**必须用 16x16 的小图标**，不能用 ExtractAssociatedIcon
-    /// ——它只返回 32x32，托盘按 16x16 渲染时会出现缩放异常甚至不显示。
-    /// 优先级：ExtractIconEx 的小图标（16x16）→ 大图标 → 程序内绘制兜底。
+    /// 取托盘图标：**黑白简约风格**，圆角方块底 + 圆环 + 时针分针。
+    ///
+    /// ### 为什么不从 exe 里抠图标
+    ///
+    /// 早先的做法是 `ExtractIconEx` 取程序自带的 .ico。那个图标是彩色的
+    /// 蓝紫渐变，和"黑白简约"的要求不符；而且它在浅色/深色任务栏上都不能保证
+    /// 清楚。用户明确要求托盘图标是黑白的，所以这里改为**完全代码绘制**，
+    /// 也就顺带解决了"exe 图标想换风格还得重新打包资源"的问题。
+    ///
+    /// ### 为什么要跟随任务栏明暗反转
+    ///
+    /// 用户的原话是"蓝色区域变白、白色区域变黑"。但那样做在**浅色任务栏**
+    /// （白底）上会变成"白底图标 + 看不见的白色部分"，看着像残缺的。
+    /// 所以采用 A 方案：黑白配色不变，但整体**跟随系统主题反转**——
+    ///   浅色任务栏 → 黑底白线
+    ///   深色任务栏 → 白底黑线
+    /// 两种情况下都清楚，且始终是黑白。
     /// </summary>
     private static Icon BuildIcon()
     {
-        string exe = Environment.ProcessPath ?? "";
-        if (exe.Length > 0 && File.Exists(exe))
+        bool lightTaskbar = IsLightTaskbar();
+
+        // 浅色任务栏用深色图标，深色任务栏用浅色图标
+        Color background = lightTaskbar ? Color.FromArgb(0x1B, 0x1D, 0x21)
+                                        : Color.FromArgb(0xF5, 0xF6, 0xF8);
+        Color foreground = lightTaskbar ? Color.White : Color.FromArgb(0x1B, 0x1D, 0x21);
+
+        try
         {
-            var large = new IntPtr[1];
-            var small = new IntPtr[1];
+            // 32x32 绘制、系统缩放到托盘尺寸，边缘更平滑
+            using var bmp = new Bitmap(32, 32);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                using var bg = new SolidBrush(background);
+                g.FillRoundedRectangle(bg, new Rectangle(1, 1, 30, 30), 8);
+
+                using var pen = new Pen(foreground, 2.6f)
+                {
+                    StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                    EndCap = System.Drawing.Drawing2D.LineCap.Round,
+                };
+
+                // 表盘圆环
+                g.DrawEllipse(pen, 8.5f, 8.5f, 15f, 15f);
+
+                // 时针指向上方、分针指向右下，构成"10 点 10 分"式的经典钟面
+                g.DrawLine(pen, 16f, 16f, 16f, 10.5f);
+                g.DrawLine(pen, 16f, 16f, 20.5f, 17.8f);
+            }
+
+            IntPtr h = bmp.GetHicon();
             try
             {
-                uint n = ExtractIconEx(exe, 0, large, small, 1);
-                if (n > 0)
-                {
-                    // 托盘用小的；退而求其次用大的
-                    IntPtr h = small[0] != IntPtr.Zero ? small[0] : large[0];
-                    if (h != IntPtr.Zero)
-                    {
-                        using var tmp = Icon.FromHandle(h);
-                        return (Icon)tmp.Clone();
-                    }
-                }
-            }
-            catch
-            {
-                // 落到绘制兜底
+                using var tmp = Icon.FromHandle(h);
+                return (Icon)tmp.Clone();
             }
             finally
             {
-                if (large[0] != IntPtr.Zero) DestroyIcon(large[0]);
-                if (small[0] != IntPtr.Zero) DestroyIcon(small[0]);
+                DestroyIcon(h);
             }
         }
+        catch
+        {
+            // 绘制失败也不该让托盘起不来：退回系统默认应用图标
+            try
+            {
+                string exe = Environment.ProcessPath ?? "";
+                if (exe.Length > 0) return Icon.ExtractAssociatedIcon(exe) ?? SystemIcons.Application;
+            }
+            catch
+            {
+                // 忽略
+            }
+            return SystemIcons.Application;
+        }
+    }
 
-        return DrawFallbackIcon();
+    /// <summary>
+    /// 任务栏（系统 UI）当前是不是浅色。
+    ///
+    /// 读的是 `SystemUsesLightTheme` 而不是 `AppsUseLightTheme`：
+    /// 前者管任务栏和开始菜单，后者管应用窗口，两者可以分开设置。
+    /// 托盘图标贴在任务栏上，所以要跟前者走。
+    /// 读不到时按浅色处理——大多数人的任务栏是浅色的。
+    /// </summary>
+    private static bool IsLightTaskbar()
+    {
+        try
+        {
+            using Microsoft.Win32.RegistryKey? key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            object? v = key?.GetValue("SystemUsesLightTheme");
+            if (v is int i) return i != 0;
+        }
+        catch
+        {
+            // 读不到按浅色
+        }
+        return true;
     }
 
     [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private static extern uint ExtractIconEx(string lpszFile, int nIconIndex,
         IntPtr[] phiconLarge, IntPtr[] phiconSmall, uint nIcons);
 
-    /// <summary>程序内绘制的兜底图标。</summary>
+    /// <summary>程序内绘制的兜底图标（已由黑白风格的 BuildIcon 取代，保留仅供极端兜底）。</summary>
     private static Icon DrawFallbackIcon()
     {
         using var bmp = new Bitmap(32, 32);
@@ -1232,8 +1297,9 @@ internal sealed class TrayContext : IDisposable
         {
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
-            using var brush = new SolidBrush(Color.FromArgb(0x25, 0x63, 0xEB));
-            g.FillEllipse(brush, 1, 1, 30, 30);
+            // 黑白：深色圆角底 + 白色指针，与 BuildIcon 保持同一风格
+            using var brush = new SolidBrush(Color.FromArgb(0x1B, 0x1D, 0x21));
+            g.FillRoundedRectangle(brush, new Rectangle(1, 1, 30, 30), 8);
             using var pen = new Pen(Color.White, 3f)
             {
                 StartCap = System.Drawing.Drawing2D.LineCap.Round,

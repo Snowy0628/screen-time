@@ -13,6 +13,15 @@
     <SolidColorBrush x:Key="SurfaceBrush"      Color="#FFFFFF"/>
     <SolidColorBrush x:Key="Surface2Brush"     Color="#FAFBFC"/>
     <SolidColorBrush x:Key="Surface3Brush"     Color="#F0F1F4"/>
+
+    <!--
+      弹窗/设置面板专用底色：**始终接近不透明**。
+      普通卡片在设了背景图时会变半透明（SurfaceBrush 被运行时替换），
+      但设置面板里全是文字控件，透过去会和背后的内容糊在一起。
+      所以它单独用一个不参与半透明化的 key。
+    -->
+    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FCFCFD"/>
+
     <SolidColorBrush x:Key="BorderBrush"       Color="#E4E6EA"/>
     <SolidColorBrush x:Key="BorderStrongBrush" Color="#D3D6DC"/>
 
