@@ -463,6 +463,23 @@ internal static class Program
                         }
                     }
 
+                case "--catest":
+                    {
+                        // 应用分类功能自检：手动设定优先级、按路径匹配、
+                        // 删除分类的连带清理、饼图占比之和。
+                        // 这些都是"错了界面也不报错"的逻辑，必须单独守住。
+                        ConsoleHelper.Ensure();
+                        try
+                        {
+                            return CategoryTest.Run();
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[异常] {ex}");
+                            return 2;
+                        }
+                    }
+
                 case "--rangetest":
                     {
                         // 周/月视图自检。这两个视图曾因一个自递归方法抛
@@ -655,6 +672,11 @@ internal static class Program
 
             store = new UsageStore(AppPaths.DatabasePath);
             recorder = new Recorder(store);
+
+            // 载入用户手动设定的应用分类。
+            // 必须在这里（而不是各 ViewModel 内部）做一次：CategoryOf 是静态方法，
+            // 排行、时间轴、分类面板都会调它，得先有缓存。
+            AppPalette.ReloadManualCategories(store);
 
             // WPF 应用对象承载消息循环。
             // 必须先创建它：Application.Current 在此之前是 null，

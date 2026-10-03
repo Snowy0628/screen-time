@@ -92,6 +92,19 @@ public sealed class UsageStore : IDisposable
                 spans_written INTEGER NOT NULL,
                 note         TEXT NOT NULL DEFAULT ''
             );
+
+            -- 用户手动设定的应用分类。
+            --
+            -- 按**完整路径**做主键，而不是进程名：不同目录下的同名 exe
+            -- （比如两个版本的启动器）应当能分别归类。
+            --
+            -- 只存"用户改过的"，没改过的走 AppPalette 的关键字推断。
+            -- 这样以后扩充关键字表时，未手动干预的应用会自动跟着改进，
+            -- 不用把推断结果也固化下来。
+            CREATE TABLE IF NOT EXISTS app_category (
+                file_path TEXT PRIMARY KEY,
+                category  TEXT NOT NULL
+            );
             """);
 
         SetMeta("schema_version", SchemaVersion.ToString());
@@ -586,6 +599,77 @@ public sealed class UsageStore : IDisposable
         using SqliteDataReader r = cmd.ExecuteReader();
         while (r.Read()) list.Add(r.GetString(0));
         return list;
+    }
+
+    // ---- 应用分类（用户手动设定）----
+
+    /// <summary>读全部手动分类：路径 → 分类名。</summary>
+    public Dictionary<string, string> GetAppCategories()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT file_path, category FROM app_category;";
+            using SqliteDataReader r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                string p = r.GetString(0);
+                if (p.Length > 0) map[p] = r.GetString(1);
+            }
+        }
+        catch
+        {
+            // 表还不存在（老库首次运行）时返回空表，不影响使用
+        }
+        return map;
+    }
+
+    /// <summary>设定某个应用的分类。传空分类名等于取消手动设定（恢复自动推断）。</summary>
+    public void SetAppCategory(string filePath, string category)
+    {
+        if (string.IsNullOrEmpty(filePath)) return;
+
+        using var cmd = _conn.CreateCommand();
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            cmd.CommandText = "DELETE FROM app_category WHERE file_path = $p;";
+            cmd.Parameters.AddWithValue("$p", filePath);
+        }
+        else
+        {
+            cmd.CommandText = """
+                INSERT INTO app_category (file_path, category) VALUES ($p, $c)
+                ON CONFLICT(file_path) DO UPDATE SET category = excluded.category;
+                """;
+            cmd.Parameters.AddWithValue("$p", filePath);
+            cmd.Parameters.AddWithValue("$c", category.Trim());
+        }
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>清空所有手动分类，恢复全部自动推断。</summary>
+    public void ClearAppCategories()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM app_category;";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 删除某个分类名下的全部手动设定，返回受影响的条数。
+    ///
+    /// 用于"删除自定义分类"：分类名没了之后，还指着它的手动设定就成了孤儿
+    /// ——下拉框里选不中，界面会显示成一个不存在的分类。所以删分类必须连带清掉。
+    /// </summary>
+    public int DeleteCategoriesByName(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return 0;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM app_category WHERE category = $c;";
+        cmd.Parameters.AddWithValue("$c", category.Trim());
+        return cmd.ExecuteNonQuery();
     }
 
     public List<string> DumpApps()

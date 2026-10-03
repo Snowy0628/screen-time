@@ -29,6 +29,12 @@ public partial class MainWindow : Window
     private readonly Log _log;
     private readonly DayViewModel _vm;
     private readonly RangeViewModel _range;
+
+    /// <summary>
+    /// 应用分类面板的数据。**懒创建**——只有真正打开过那个面板才建，
+    /// 否则每次启动都要白跑一次查询。
+    /// </summary>
+    private CategoryViewModel? _categoryVm;
     private readonly DispatcherTimer _timer;
 
     /// <summary>当前打开的关闭询问对话框（用于程序退出时先关掉它）。</summary>
@@ -225,7 +231,6 @@ public partial class MainWindow : Window
             bmp.EndInit();
             bmp.Freeze();
             BrandIcon.Source = bmp;
-            if (SettingsBrandIcon is not null) SettingsBrandIcon.Source = bmp;
 
             // 窗口图标：浅色模式白底黑线，深色模式黑底白线
             string icoName = dark ? "app-dark.ico" : "app-light.ico";
@@ -258,6 +263,174 @@ public partial class MainWindow : Window
 
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
     private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    // ==================================================================
+    // 应用分类面板
+    // ==================================================================
+
+    /// <summary>
+    /// 打开分类面板。
+    ///
+    /// 每次打开都全量刷新：用户可能在主界面停留很久、期间应用列表变了，
+    /// 也刚在设置里改过东西。刷新一次的成本是查一次当天的应用汇总，
+    /// 对本地 SQLite 来说可以忽略。
+    /// </summary>
+    private void OnCategoryClick(object sender, RoutedEventArgs e) => OpenCategoryPanel();
+
+    internal void OpenCategoryPanel()
+    {
+        EnsureCategoryVm();
+
+        CategorySummaryText.Text = _categoryVm!.SummaryText;
+        CategoryDonut.SetData(_categoryVm.BuildSlices());
+        CategoryTotalText.Text = _categoryVm.TotalText;
+        CategoryManualHint.Text = _categoryVm.ManualHintText;
+
+        CategoryOverlay.Visibility = Visibility.Visible;
+        UpdateCategorySearchHint();
+
+        if (!AppSettings.Current.EnableAnimations) return;
+        var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160));
+        CategoryCard.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void OnCategoryClose(object sender, RoutedEventArgs e) => CloseCategoryPanel();
+
+    private void OnCategoryBackdropClick(object sender, MouseButtonEventArgs e) => CloseCategoryPanel();
+
+    private void CloseCategoryPanel()
+    {
+        CategoryOverlay.Visibility = Visibility.Collapsed;
+        CategoryCard.BeginAnimation(OpacityProperty, null);
+
+        // 分类变了会影响到排行与图例的副标题，主界面要重画一次
+        Reload();
+    }
+
+    /// <summary>懒创建 ViewModel：第一次打开面板时才查库。</summary>
+    private void EnsureCategoryVm()
+    {
+        if (_categoryVm is not null) return;
+
+        _categoryVm = new CategoryViewModel(_owner.Store);
+        CategoryLegendHost.ItemsSource = _categoryVm.Legend;
+        CategoryAppHost.ItemsSource = _categoryVm.Apps;
+
+        // 让 DataTemplate 里的 ComboBox 能拿到 AllCategories
+        CategoryAppHost.DataContext = _categoryVm;
+
+        _categoryVm.Refresh();
+    }
+
+    /// <summary>刷新面板上所有与 ViewModel 相关的显示。</summary>
+    private void RefreshCategoryPanel()
+    {
+        if (_categoryVm is null) return;
+
+        CategorySummaryText.Text = _categoryVm.SummaryText;
+        CategoryDonut.SetData(_categoryVm.BuildSlices());
+        CategoryTotalText.Text = _categoryVm.TotalText;
+        CategoryManualHint.Text = _categoryVm.ManualHintText;
+    }
+
+    private void OnCategorySearchChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_categoryVm is null) return;
+        _categoryVm.Search = CategorySearchBox.Text;
+        UpdateCategorySearchHint();
+    }
+
+    /// <summary>搜索框为空时显示占位提示（WPF 的 TextBox 没有内置 placeholder）。</summary>
+    private void UpdateCategorySearchHint()
+    {
+        if (CategorySearchHint is null || CategorySearchBox is null) return;
+        CategorySearchHint.Visibility = string.IsNullOrEmpty(CategorySearchBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void OnNewCategoryKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) OnAddCategoryClick(sender, e);
+    }
+
+    private void OnAddCategoryClick(object sender, RoutedEventArgs e)
+    {
+        EnsureCategoryVm();
+
+        string name = NewCategoryBox.Text ?? "";
+        if (name.Trim().Length == 0)
+        {
+            CategoryManualHint.Text = "请先填分类名";
+            return;
+        }
+
+        if (!Categories.AddCustom(name))
+        {
+            CategoryManualHint.Text = $"「{name.Trim()}」已存在，或名字过长（最多 12 个字）";
+            return;
+        }
+
+        NewCategoryBox.Text = "";
+        _categoryVm!.ReloadCategories();
+        RefreshCategoryPanel();
+        CategoryManualHint.Text = $"已新增分类「{name.Trim()}」，可在下方为应用选择它";
+    }
+
+    private void OnDeleteCategoryClick(object sender, RoutedEventArgs e)
+    {
+        EnsureCategoryVm();
+
+        string name = (NewCategoryBox.Text ?? "").Trim();
+        if (name.Length == 0)
+        {
+            CategoryManualHint.Text = "在输入框里填要删除的分类名，再点「删除所选」";
+            return;
+        }
+
+        if (Categories.IsDefault(name))
+        {
+            CategoryManualHint.Text = $"「{name}」是系统默认分类，不能删除";
+            return;
+        }
+
+        Categories.RemoveCustom(name);
+
+        // 分类没了，但可能有应用还指着它 —— 那些手动设定要一并清掉，
+        // 否则它们会变成指向一个不存在分类的孤儿数据（下拉框里选不中）
+        int cleared = _owner.Store.DeleteCategoriesByName(name);
+        AppPalette.ReloadManualCategories(_owner.Store);
+
+        NewCategoryBox.Text = "";
+        _categoryVm!.Refresh();
+        RefreshCategoryPanel();
+        CategoryManualHint.Text = cleared > 0
+            ? $"已删除分类「{name}」，{cleared} 个应用改回自动识别"
+            : $"已删除分类「{name}」";
+    }
+
+    /// <summary>某个应用的下拉框改选。</summary>
+    private void OnAppCategoryChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_categoryVm is null) return;
+        if (sender is not ComboBox cb) return;
+        if (cb.DataContext is not AppCategoryRow row) return;
+        if (cb.SelectedItem is not string picked) return;
+        if (picked == row.Category && row.IsManual) return;
+
+        _categoryVm.SetCategory(row, picked);
+
+        // 饼图与提示要跟着变；列表本身不重建，否则下拉框会当场失焦
+        RefreshCategoryPanel();
+    }
+
+    private void OnResetCategoriesClick(object sender, RoutedEventArgs e)
+    {
+        EnsureCategoryVm();
+        _categoryVm!.ResetAll();
+        RefreshCategoryPanel();
+        CategoryManualHint.Text = "已清空全部手动分类，改回关键字自动识别";
+    }
 
     // ================= 设置面板 =================
 
@@ -1434,8 +1607,16 @@ public partial class MainWindow : Window
     /// 读不出具体时长——一根柱子到底是 20 分钟还是 50 分钟，只能靠悬停。
     /// 加上刻度线后一眼就能量出来。
     ///
-    /// 最上面的 60 分线与图表顶端重合，它同时还是"满格"的基准线，
-    /// 所以画得比其他几条实一些。
+    /// ### 画法上踩过的两个坑
+    ///
+    /// **用虚线而不是实线**（`Line` + `StrokeDashArray`，不能用 `Border`）。
+    /// 早先用 `Border` 画实线，理由是"`Border` 没法画虚线"——但那个限制只是
+    /// `Border` 的限制，换成 `Line` 就能画。实线会与柱子的色块抢注意力，
+    /// 深色主题下尤其明显。
+    ///
+    /// **标签要自带底色**。线是横贯整个绘图区的，而标签就挂在同一高度上，
+    /// 于是线会从文字中间穿过去，看起来像删除线。给标签加一层与卡片同色的
+    /// 背景，等于把线在文字处"断"开——这也正是常见图表的做法。
     /// </summary>
     private static readonly int[] ScaleMarksMinutes = { 15, 30, 45, 60 };
 
@@ -1444,32 +1625,52 @@ public partial class MainWindow : Window
     {
         HourChartScale.Children.Clear();
 
+        Brush lineBrush = FindResource("BorderBrush") as Brush ?? Brushes.LightGray;
+        Brush labelBg = FindResource("SurfaceBrush") as Brush ?? Brushes.Transparent;
+        Brush labelFg = FindResource("Text3Brush") as Brush ?? Brushes.Gray;
+
         foreach (int minutes in ScaleMarksMinutes)
         {
             double y = BarAreaHeight * (1.0 - minutes / 60.0);
 
-            var line = new Border
+            // 60 分那条是"满格"基准线，画实线并更明显一些；
+            // 其余三条是辅助读数用，画虚线且更淡。
+            bool baseline = minutes == 60;
+
+            var line = new System.Windows.Shapes.Line
             {
-                Height = 1,
+                X1 = 0,
+                X2 = 1,
+                Y1 = 0,
+                Y2 = 0,
+                Stretch = Stretch.Fill,      // 横向铺满，不依赖布局宽度
+                Stroke = lineBrush,
+                StrokeThickness = 1,
+                Opacity = baseline ? 0.75 : 0.5,
                 VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(0, y, 0, 0),
-                BorderBrush = FindResource("BorderBrush") as Brush ?? Brushes.LightGray,
-                BorderThickness = new Thickness(0, 1, 0, 0),
-                Opacity = minutes == 60 ? 0.8 : 0.45,
-                // 边框只能画实线，虚线用 StrokeDashArray 需要 Rectangle；
-                // 这里用 Border 的实线 + 较低透明度，视觉上同样是"参考线"，
-                // 且不会与柱子的色块抢注意力。
+                IsHitTestVisible = false,
             };
+            if (!baseline)
+            {
+                var dashes = new DoubleCollection { 4, 4 };
+                dashes.Freeze();
+                line.StrokeDashArray = dashes;
+            }
             HourChartScale.Children.Add(line);
 
             var label = new TextBlock
             {
                 Text = $"{minutes}分",
                 FontSize = 9.5,
-                Foreground = FindResource("Text3Brush") as Brush ?? Brushes.Gray,
+                Foreground = labelFg,
                 VerticalAlignment = VerticalAlignment.Top,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, y - 7, 4, 0),
+                // 上下各留 1px，让底色把线断开；右侧留 3px 不贴边
+                Margin = new Thickness(0, y - 8, 3, 0),
+                Padding = new Thickness(3, 1, 3, 1),
+                Background = labelBg,       // 盖住穿过来的线
+                IsHitTestVisible = false,
             };
             HourChartScale.Children.Add(label);
         }

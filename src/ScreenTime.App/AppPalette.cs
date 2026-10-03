@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Windows.Media;
 
 // WPF 与 WinForms 都存在 Color，固定用 WPF 的
@@ -55,12 +57,52 @@ internal static class AppPalette
     }
 
     /// <summary>
-    /// 粗略分类，用于排行的副标题。关键字匹配，命中即返回。
+    /// 用户手动设定的分类缓存：路径 → 分类名。
+    ///
+    /// 为什么要缓存：分类判定在渲染排行时对每个应用调用一次，而手动分类表
+    /// 存在数据库里——每次都查库会成为刷新时的固定开销。缓存由
+    /// <see cref="ReloadManualCategories"/> 在启动时与用户改动后刷新。
+    /// </summary>
+    private static Dictionary<string, string> _manual =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>从数据库重新载入手动分类。启动时与用户在分类界面改动后调用。</summary>
+    public static void ReloadManualCategories(Core.UsageStore store)
+    {
+        try
+        {
+            _manual = store.GetAppCategories();
+        }
+        catch
+        {
+            _manual = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// 分类判定。**优先级：用户手动设定 > 关键字自动推断 > "其他"**。
+    ///
+    /// 手动优先是这套设计的核心：自动推断只能做到"大致对"，
+    /// 而用户对自己装了什么程序最清楚。手动设定按**完整路径**匹配，
+    /// 不同目录下的同名 exe 可以分开归类。
+    /// </summary>
+    public static string CategoryOf(string exePath)
+    {
+        if (exePath.Length > 0 && _manual.TryGetValue(exePath, out string? manual))
+        {
+            if (!string.IsNullOrWhiteSpace(manual)) return manual;
+        }
+
+        return InferCategory(exePath);
+    }
+
+    /// <summary>
+    /// 关键字自动推断。用户没手动设定的应用走这条。
     ///
     /// **顺序有意义**：先匹配的那条赢。"游戏"放在"娱乐"之前，
     /// 否则 `steam` 这类两者都沾边的会被娱乐先抢走。
     /// </summary>
-    public static string CategoryOf(string exePath)
+    public static string InferCategory(string exePath)
     {
         string n = System.IO.Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
 
@@ -105,7 +147,7 @@ internal static class AppPalette
             return "系统";
         if (Match(n, "screentime", "screen")) return "自身";
 
-        return "其他";
+        return Categories.Fallback;
     }
 
     private static bool Match(string name, params string[] keys)

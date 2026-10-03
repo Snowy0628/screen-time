@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -81,6 +82,15 @@ internal sealed class AppSettings
 
     /// <summary>背景图不透明度（0.0–1.0）。默认偏淡，避免盖过内容。</summary>
     public double BackgroundImageOpacity { get; set; } = 0.25;
+
+    /// <summary>
+    /// 用户自己新增的应用分类名。
+    ///
+    /// 存在设置里而不是数据库：卸载时若选了"全部删除"，数据库会被清掉，
+    /// 但"我起过哪些分类名"属于配置而不是使用数据，不该跟着没。
+    /// 默认分类（开发/浏览器/…）写死在 <see cref="Categories.Defaults"/>，不存这里。
+    /// </summary>
+    public List<string> CustomCategories { get; set; } = new();
 
     // ---- 读写 ----
 

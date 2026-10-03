@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ctl="clr-namespace:ScreenTime.App.Controls"
+        xmlns:local="clr-namespace:ScreenTime.App"
         Title="屏幕使用时间"
         Width="1060" Height="780" MinWidth="880" MinHeight="560"
         WindowStartupLocation="CenterScreen"
@@ -326,7 +327,18 @@
                     </StackPanel>
                 </Border>
 
-                <Button x:Name="ThemeButton" Style="{StaticResource IconButton}"
+                <!--
+                    按钮顺序（用户指定）：日/周/月 → 分类统计 → 深浅色 → 设置。
+                    分类统计夹在范围切换和深浅色中间。
+                    全部用 Segoe MDL2 的单色字形，天然是黑白的，
+                    与界面主题一起走（不像位图图标还要准备两套）。
+                -->
+                <Button x:Name="CategoryButton" Style="{StaticResource IconButton}" Margin="8,0,0,0"
+                        Click="OnCategoryClick" ToolTip="应用分类与占比统计">
+                    <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                </Button>
+
+                <Button x:Name="ThemeButton" Style="{StaticResource IconButton}" Margin="8,0,0,0"
                         Click="OnThemeClick" ToolTip="切换外观：跟随系统 / 浅色 / 深色">
                     <TextBlock x:Name="ThemeGlyph" Text="&#xE793;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
                 </Button>
@@ -788,12 +800,16 @@
                     <Grid Grid.Row="0" Margin="22,18,14,12">
                         <StackPanel Orientation="Horizontal">
                             <!--
-                                设置面板的标题图标也用界面 Logo，与顶栏保持一致。
-                                之前这里是个蓝紫渐变方块 + 齿轮字形，换主题色时不变，
-                                和已经改成黑白的顶栏 Logo 对不上。
+                                图标与顶栏的「设置」按钮用同一个字形，一看就知道
+                                这个面板是从哪儿打开的。之前这里放的是应用图标，
+                                和按钮上的齿轮对不上。
                             -->
-                            <Image x:Name="SettingsBrandIcon" Width="28" Height="28"
-                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Border Width="28" Height="28" CornerRadius="8"
+                                    Background="{DynamicResource Surface3Brush}">
+                                <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextBrush}"/>
+                            </Border>
                             <TextBlock Text="设置" FontSize="15.5" FontWeight="SemiBold" Margin="10,0,0,0"
                                        VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextBrush}"/>
@@ -1053,6 +1069,261 @@
                         <Button HorizontalAlignment="Right" Content="完成"
                                 Style="{StaticResource DialogButton}" IsDefault="True"
                                 Click="OnSettingsClose"/>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!--
+            ===== 应用分类面板 =====
+
+            结构按用户要求：**统计在上、自定义在下**。
+              1. 圆环图 + 图例（各分类时长占比）
+              2. 新建分类（自己起名字）
+              3. 应用列表（逐个改分类，带搜索）
+
+            ZIndex 比设置面板再高一级，两个面板理论上不会同时开，
+            但真同时开了也不该互相穿透。
+        -->
+        <Grid x:Name="CategoryOverlay" Grid.RowSpan="2" Panel.ZIndex="25"
+              Visibility="Collapsed">
+            <Rectangle Fill="#66000000" MouseLeftButtonDown="OnCategoryBackdropClick"/>
+
+            <Border x:Name="CategoryCard"
+                    Width="620" MaxHeight="720"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{DynamicResource DialogSurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="16" Padding="0">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.18"/>
+                </Border.Effect>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>   <!-- 标题 -->
+                        <RowDefinition Height="Auto"/>   <!-- 饼图 -->
+                        <RowDefinition Height="Auto"/>   <!-- 新建分类 -->
+                        <RowDefinition Height="*"/>      <!-- 应用列表 -->
+                        <RowDefinition Height="Auto"/>   <!-- 底部按钮 -->
+                    </Grid.RowDefinitions>
+
+                    <!-- 标题 -->
+                    <Grid Grid.Row="0" Margin="22,18,14,10">
+                        <StackPanel Orientation="Horizontal">
+                            <!-- 图标与顶栏的分类按钮同字形，保持一一对应 -->
+                            <Border Width="28" Height="28" CornerRadius="8"
+                                    Background="{DynamicResource Surface3Brush}">
+                                <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextBrush}"/>
+                            </Border>
+                            <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="应用分类" FontSize="15.5" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextBrush}"/>
+                                <TextBlock x:Name="CategorySummaryText" FontSize="11.5"
+                                           Foreground="{DynamicResource Text3Brush}"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <Button HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Style="{StaticResource TextButton}" Content="&#xE711;"
+                                FontFamily="Segoe MDL2 Assets" Click="OnCategoryClose"
+                                ToolTip="关闭"/>
+                    </Grid>
+
+                    <!-- 统计：圆环图 + 图例 -->
+                    <Border Grid.Row="1" Margin="22,0,22,12" Padding="16,14"
+                            CornerRadius="12" Background="{DynamicResource Surface2Brush}"
+                            BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- 圆环 + 中间总时长 -->
+                            <Grid Grid.Column="0" Width="150" Height="150">
+                                <local:DonutChart x:Name="CategoryDonut"/>
+                                <!--
+                                    中心文字**固定用白色**，不跟主题走。
+                                    原因：它压在圆环上，而环里的扇区在任何主题下都是
+                                    中深色，用 TextBrush（浅色主题下是深灰）会看不清。
+                                    加一层白描边保证在浅色扇区上也能读。
+                                -->
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            IsHitTestVisible="False">
+                                    <TextBlock x:Name="CategoryTotalText" FontSize="16"
+                                               FontWeight="SemiBold" HorizontalAlignment="Center"
+                                               Foreground="White">
+                                        <TextBlock.Effect>
+                                            <DropShadowEffect BlurRadius="4" ShadowDepth="0"
+                                                              Opacity="0.55" Color="Black"/>
+                                        </TextBlock.Effect>
+                                    </TextBlock>
+                                    <TextBlock Text="今日合计" FontSize="10.5" HorizontalAlignment="Center"
+                                               Margin="0,2,0,0" Foreground="White" Opacity="0.85">
+                                        <TextBlock.Effect>
+                                            <DropShadowEffect BlurRadius="4" ShadowDepth="0"
+                                                              Opacity="0.55" Color="Black"/>
+                                        </TextBlock.Effect>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 图例：分类色块 + 时长 + 占比 -->
+                            <ScrollViewer Grid.Column="1" Margin="16,0,0,0"
+                                          VerticalScrollBarVisibility="Auto" MaxHeight="150">
+                                <ItemsControl x:Name="CategoryLegendHost">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Width="10" Height="10"
+                                                        CornerRadius="3" VerticalAlignment="Center"
+                                                        Margin="0,0,8,0"
+                                                        Background="{Binding Brush}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Name}"
+                                                           FontSize="12" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Foreground="{DynamicResource TextBrush}"/>
+                                                <TextBlock Grid.Column="2" Text="{Binding TimeText}"
+                                                           FontSize="12" Margin="10,0,0,0"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource Text2Brush}"/>
+                                                <TextBlock Grid.Column="3" Text="{Binding PercentText}"
+                                                           FontSize="12" Margin="10,0,0,0" MinWidth="48"
+                                                           TextAlignment="Right" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource Text3Brush}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                    <!-- 新建分类 -->
+                    <Grid Grid.Row="2" Margin="22,0,22,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="新建分类" VerticalAlignment="Center"
+                                   Margin="0,0,8,0"
+                                   Foreground="{DynamicResource TextBrush}"/>
+                        <TextBox x:Name="NewCategoryBox" Grid.Column="1" Padding="8,5"
+                                 VerticalContentAlignment="Center"
+                                 ToolTip="填一个分类名，例如「学习」「剪辑」。最多 12 个字"
+                                 KeyDown="OnNewCategoryKeyDown"/>
+                        <Button Grid.Column="2" Content="添加" Style="{StaticResource TextButton}"
+                                Margin="6,0,0,0" Click="OnAddCategoryClick"/>
+                        <Button Grid.Column="3" Content="删除所选" Style="{StaticResource TextButton}"
+                                Margin="2,0,0,0" Click="OnDeleteCategoryClick"
+                                ToolTip="删除一个自定义分类（系统默认分类不能删）"/>
+                    </Grid>
+
+                    <!-- 应用列表 -->
+                    <Grid Grid.Row="3" Margin="22,0,22,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                            <TextBox x:Name="CategorySearchBox" Padding="8,5"
+                                     VerticalContentAlignment="Center"
+                                     TextChanged="OnCategorySearchChanged"
+                                     ToolTip="按名称或路径筛选"/>
+                            <TextBlock x:Name="CategorySearchHint" Text="搜索应用…" FontSize="12"
+                                       Margin="10,0,0,0" VerticalAlignment="Center"
+                                       IsHitTestVisible="False"
+                                       Foreground="{DynamicResource Text3Brush}"/>
+                        </Grid>
+
+                        <!-- 表头 -->
+                        <Grid Grid.Row="1" Margin="0,0,12,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="应用" FontSize="11"
+                                       Foreground="{DynamicResource Text3Brush}"/>
+                            <TextBlock Grid.Column="1" Text="时长" FontSize="11" MinWidth="58"
+                                       TextAlignment="Right" Margin="0,0,14,0"
+                                       Foreground="{DynamicResource Text3Brush}"/>
+                            <TextBlock Grid.Column="2" Text="分类" FontSize="11" Width="140"
+                                       Foreground="{DynamicResource Text3Brush}"/>
+                        </Grid>
+
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                                      Padding="0,0,4,0">
+                            <ItemsControl x:Name="CategoryAppHost">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                                <Image Source="{Binding Icon}" Width="22" Height="22"
+                                                       VerticalAlignment="Center"
+                                                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                <StackPanel Margin="9,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Display}" FontSize="12.5"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource TextBrush}"/>
+                                                    <TextBlock Text="{Binding PathHint}" FontSize="10"
+                                                               MaxWidth="230" TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource Text3Brush}"/>
+                                                </StackPanel>
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="1" Text="{Binding TimeText}"
+                                                       FontSize="12" MinWidth="58" TextAlignment="Right"
+                                                       Margin="0,0,14,0" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource Text2Brush}"/>
+
+                                            <StackPanel Grid.Column="2" Width="140">
+                                                <ComboBox ItemsSource="{Binding DataContext.AllCategories,
+                                                            RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                          SelectedItem="{Binding Category, Mode=TwoWay}"
+                                                          SelectionChanged="OnAppCategoryChanged"
+                                                          FontSize="12"/>
+                                                <TextBlock Text="{Binding ManualHint}" FontSize="9.5"
+                                                           Margin="2,2,0,0"
+                                                           Foreground="{DynamicResource Text3Brush}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- 底部 -->
+                    <Grid Grid.Row="4" Margin="22,12,22,18">
+                        <TextBlock x:Name="CategoryManualHint" VerticalAlignment="Center"
+                                   FontSize="11.5"
+                                   Foreground="{DynamicResource Text3Brush}"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="全部重置" Style="{StaticResource TextButton}"
+                                    Click="OnResetCategoriesClick"
+                                    ToolTip="清空所有手动分类，全部改回关键字自动识别"/>
+                            <Button Content="完成" Style="{StaticResource DialogButton}"
+                                    Margin="8,0,0,0" IsDefault="True" Click="OnCategoryClose"/>
+                        </StackPanel>
                     </Grid>
                 </Grid>
             </Border>
