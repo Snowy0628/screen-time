@@ -868,10 +868,16 @@
                                        Foreground="{DynamicResource Text3Brush}"/>
 
                             <CheckBox x:Name="FullscreenActiveCheck"
-                                      Content="全屏应用算作「正在使用」"
+                                      Content="真全屏应用算作「正在使用」"
                                       Margin="0,0,0,6" Click="OnFullscreenActiveToggled"
                                       Foreground="{DynamicResource TextBrush}"/>
-                            <TextBlock Text="看视频、上网课、玩游戏时长时间不碰键鼠，但人还在电脑前。勾选后这些时间不会被误记为「空闲」"
+                            <!--
+                                文案必须写明"只认 F11 真全屏"。
+                                旧判据把"最大化窗口"也算进来，等于给任何最大化应用开了
+                                永久豁免——只要窗口最大化，空闲阈值就永远不生效。
+                                而"最大化看视频"那个场景，媒体检测管得更准。
+                            -->
+                            <TextBlock Text="只认 F11 真全屏（含独占全屏游戏），最大化窗口不算。看视频、上网课不需要靠它——那种情况由「前台是否在放媒体」识别，窗口化播放也算「正在使用」"
                                        FontSize="11" Margin="0,0,0,12" TextWrapping="Wrap"
                                        Foreground="{DynamicResource Text3Brush}"/>
 

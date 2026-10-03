@@ -1164,7 +1164,13 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>全屏应用是否算作"正在使用"。</summary>
+    /// <summary>
+    /// 真全屏应用是否算作"正在使用"。
+    ///
+    /// 注意这条**不管看视频**——那是媒体检测的活，任何窗口模式都管。
+    /// 这里只决定"F11 真全屏算不算活跃"。文案里说清楚，否则用户会以为
+    /// 关掉它就不能看视频了。
+    /// </summary>
     private void OnFullscreenActiveToggled(object sender, RoutedEventArgs e)
     {
         if (_suppressSettingsEvents) return;
@@ -1172,8 +1178,8 @@ public partial class MainWindow : Window
         AppSettings.Current.Save();
         _owner.ApplyRuntimeSettings();
         SettingsHint.Text = AppSettings.Current.FullscreenCountsAsActive
-            ? "已启用：全屏看视频/玩游戏不会记为「空闲」"
-            : "已关闭：只看键鼠输入判定空闲";
+            ? "已启用：F11 真全屏（含独占全屏游戏）算活跃；最大化窗口仍按空闲阈值判定"
+            : "已关闭：只按键鼠 / 手柄 / 媒体播放判定，不看窗口几何";
     }
 
     /// <summary>横轴起始时间。</summary>
