@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace ScreenTime.App;
 
@@ -16,17 +17,24 @@ namespace ScreenTime.App;
 ///   · 扇区之间要有细微间隙，否则同色系相邻时边界糊在一起
 /// 现成控件大多不满足第二点，而且为了这么点东西引一个依赖不值。
 ///
-/// ### 画法
+/// ### 入场动画
 ///
-/// 用 `Path` + `ArcSegment` 拼扇形。**整圆要特别处理**：只有一项占 100% 时，
-/// 起止点重合，`ArcSegment` 会退化成画不出东西——这时改画两个半圆。
+/// 切换统计周期时，扇区从 12 点方向**顺时针扫出**，像被"画"上去一样。
+/// 实现方式不是逐个扇区淡入——那样看不出顺序。而是引入一个"扫出进度"：
 ///
-/// 用 `Freeze()` 冻结几何：图表每次刷新都会重建，冻结能让 WPF 跳过
-/// 变更通知的开销，数据量不大但白拿的性能没理由不要。
+///   Progress = 0.0  什么都没画
+///   Progress = 0.5  画到圆周一半
+///   Progress = 1.0  完整圆环
+///
+/// 绘制时每个扇区按自己的角度区间与进度取交集，超出部分直接不画。
+/// 这样无论是一个大扇区还是十几个小扇区，看起来都是连续扫过一整圈。
+///
+/// 用 <see cref="FrameworkPropertyMetadataOptions.AffectsRender"/> 让属性变化
+/// 自动触发重绘，不需要手动调 InvalidateVisual。
 /// </summary>
 internal sealed class DonutChart : FrameworkElement
 {
-    /// <summary>一段数据。Percentage 由控件自己算，调用方只给 Seconds。</summary>
+    /// <summary>一段数据。</summary>
     internal sealed record Slice(string Label, long Seconds, Color Fill);
 
     private List<Slice> _slices = new();
@@ -35,12 +43,51 @@ internal sealed class DonutChart : FrameworkElement
     /// <summary>环的厚度占半径的比例。0.34 视觉上比较接近常见图表的观感。</summary>
     private const double ThicknessRatio = 0.34;
 
+    /// <summary>
+    /// 扫出进度（0–1）。动画驱动它，用 AffectsRender 自动重绘。
+    /// </summary>
+    public static readonly DependencyProperty ProgressProperty =
+        DependencyProperty.Register(
+            nameof(Progress), typeof(double), typeof(DonutChart),
+            new FrameworkPropertyMetadata(1.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public double Progress
+    {
+        get => (double)GetValue(ProgressProperty);
+        set => SetValue(ProgressProperty, value);
+    }
+
     public void SetData(IReadOnlyList<Slice> slices)
     {
         _slices = new List<Slice>(slices);
         _total = 0;
         foreach (Slice s in _slices) _total += s.Seconds;
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// 从当前进度重新扫一遍。
+    ///
+    /// 动效关闭时直接落到 1.0（不做无谓的动画），符合"低配/远程桌面"的意图。
+    /// </summary>
+    public void PlaySweep(int milliseconds = 620)
+    {
+        if (!AppSettings.Current.EnableAnimations)
+        {
+            BeginAnimation(ProgressProperty, null);
+            Progress = 1.0;
+            return;
+        }
+
+        var anim = new DoubleAnimation
+        {
+            From = 0.0,
+            To = 1.0,
+            Duration = TimeSpan.FromMilliseconds(milliseconds),
+            // 缓出：起手快、收尾慢，看起来像"扫过去停住"而不是匀速转
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        BeginAnimation(ProgressProperty, anim);
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -54,8 +101,10 @@ internal sealed class DonutChart : FrameworkElement
         if (radius <= 2) return;
         double thickness = radius * ThicknessRatio;
         double midR = radius - thickness / 2;
+        double progress = Math.Clamp(Progress, 0, 1);
 
-        // 没有任何数据：画一个空环，避免整块空白看不出是图表
+        // 没有任何数据：画一个空环，避免整块空白看不出是图表。
+        // 空环不参与扫出动画——没有扇区可扫，让它始终可见更合理。
         if (_total <= 0)
         {
             var emptyPen = new Pen(new SolidColorBrush(Color.FromArgb(0x33, 0x88, 0x88, 0x88)), thickness);
@@ -64,7 +113,9 @@ internal sealed class DonutChart : FrameworkElement
             return;
         }
 
-        // 单项占满时 ArcSegment 画不出来，单独处理
+        if (progress <= 0) return;
+
+        // 单项占满时 ArcSegment 画不出来（起止点重合），单独处理
         int nonZero = 0;
         Slice? only = null;
         foreach (Slice s in _slices)
@@ -74,22 +125,43 @@ internal sealed class DonutChart : FrameworkElement
 
         if (nonZero == 1 && only is not null)
         {
-            var pen = new Pen(new SolidColorBrush(only.Fill), thickness);
-            pen.Freeze();
-            dc.DrawEllipse(null, pen, center, midR, midR);
+            // 只有一项：随着进度把整圈画出来
+            double sweep = 360.0 * progress;
+            if (sweep >= 359.99)
+            {
+                var pen = new Pen(new SolidColorBrush(only.Fill), thickness);
+                pen.Freeze();
+                dc.DrawEllipse(null, pen, center, midR, midR);
+            }
+            else
+            {
+                DrawArc(dc, center, midR, thickness, -90.0, sweep, only.Fill);
+            }
             return;
         }
+
+        // 扫出的终止角度：从 12 点方向顺时针走 progress 圈
+        double endAngle = -90.0 + 360.0 * progress;
 
         double angle = -90.0;   // 从 12 点方向开始，顺时针
         foreach (Slice s in _slices)
         {
             if (s.Seconds <= 0) continue;
 
-            double sweep = 360.0 * s.Seconds / _total;
-            if (sweep <= 0) continue;
+            double full = 360.0 * s.Seconds / _total;
+            double sliceStart = angle;
+            double sliceEnd = angle + full;
+            angle = sliceEnd;
 
-            DrawArc(dc, center, midR, thickness, angle, sweep, s.Fill);
-            angle += sweep;
+            // 这一段还没扫到
+            if (sliceStart >= endAngle) break;
+
+            // 扫到一半的扇区只画已扫到的部分
+            double visibleEnd = Math.Min(sliceEnd, endAngle);
+            double visibleSweep = visibleEnd - sliceStart;
+            if (visibleSweep <= 0) continue;
+
+            DrawArc(dc, center, midR, thickness, sliceStart, visibleSweep, s.Fill);
         }
     }
 
@@ -97,12 +169,21 @@ internal sealed class DonutChart : FrameworkElement
     private static void DrawArc(DrawingContext dc, Point c, double midR, double thickness,
                                 double startAngle, double sweep, Color color)
     {
+        if (sweep <= 0) return;
+
         // 扇区之间留一点缝：同色系相邻时靠这个缝才分得清边界。
         // 缝太大会显得碎，1.2 度是肉眼刚好能看出、又不影响占比观感的程度。
+        // 扫出动画进行中不留缝（正在"画"的过程中留缝会看出断口），
+        // 只有完整扇区才留。
         const double GapDegrees = 1.2;
-        double s = startAngle + GapDegrees / 2;
-        double e = startAngle + sweep - GapDegrees / 2;
-        if (e <= s) { s = startAngle; e = startAngle + sweep; }   // 太窄就不留缝了
+        double s = startAngle;
+        double e = startAngle + sweep;
+        if (sweep < 359.9)
+        {
+            s = startAngle + GapDegrees / 2;
+            e = startAngle + sweep - GapDegrees / 2;
+            if (e <= s) { s = startAngle; e = startAngle + sweep; }   // 太窄就不留缝了
+        }
 
         double outer = midR + thickness / 2;
         double inner = midR - thickness / 2;
@@ -134,7 +215,7 @@ internal sealed class DonutChart : FrameworkElement
     }
 }
 
-/// <summary>把秒数格式化成"1时20分"这类短文本，供图例使用。</summary>
+/// <summary>把秒数格式化成"1时20分"这类短文本，供图例与统计使用。</summary>
 internal static class DurationText
 {
     public static string Short(long seconds)

@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using System.Windows.Media;
 using ScreenTime.Core;
 
@@ -35,7 +36,7 @@ internal sealed class AppCategoryRow : INotifyPropertyChanged
 
     public string TimeText => DurationText.Short(Seconds);
 
-    /// <summary>副标题：显示路径尾部，方便区分同名 exe。</summary>
+    /// <summary>副标题：显示所在目录，方便区分同名 exe。</summary>
     public string PathHint
     {
         get
@@ -44,8 +45,7 @@ internal sealed class AppCategoryRow : INotifyPropertyChanged
             try
             {
                 string? dir = System.IO.Path.GetDirectoryName(FilePath);
-                if (string.IsNullOrEmpty(dir)) return FilePath;
-                return dir;
+                return string.IsNullOrEmpty(dir) ? FilePath : dir;
             }
             catch
             {
@@ -54,7 +54,7 @@ internal sealed class AppCategoryRow : INotifyPropertyChanged
         }
     }
 
-    /// <summary>当前分类。改动会触发界面刷新（下拉框回显、饼图重算由外层负责）。</summary>
+    /// <summary>当前分类。改动会触发界面刷新（下拉框回显）。</summary>
     public string Category
     {
         get => _category;
@@ -65,8 +65,28 @@ internal sealed class AppCategoryRow : INotifyPropertyChanged
             IsManual = true;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ManualHint));
+            OnPropertyChanged(nameof(CategoryBrush));
         }
     }
+
+    /// <summary>
+    /// 该应用所属分类的颜色，给行尾那个色点用。
+    ///
+    /// 颜色是**分类**的属性而不是应用的属性——所以同分类的所有应用
+    /// 显示同一个色点。改它等于改分类色，饼图里那一块会跟着变。
+    /// </summary>
+    public Brush CategoryBrush
+    {
+        get
+        {
+            var b = new SolidColorBrush(Categories.ColorFor(_category));
+            b.Freeze();
+            return b;
+        }
+    }
+
+    /// <summary>分类色被改动后通知色点换色。</summary>
+    public void RefreshCategoryBrush() => OnPropertyChanged(nameof(CategoryBrush));
 
     /// <summary>手动设定的标记文本，让用户一眼看出哪些是自己改过的。</summary>
     public string ManualHint => IsManual ? "已手动指定" : "自动识别";
@@ -97,8 +117,9 @@ internal sealed class CategoryLegendRow
         Color = color;
         TimeText = DurationText.Short(seconds);
         PercentText = DurationText.Percent(seconds, total);
-        Brush = new SolidColorBrush(color);
-        Brush.Freeze();
+        var b = new SolidColorBrush(color);
+        b.Freeze();
+        Brush = b;
     }
 
     public string Name { get; }
@@ -109,20 +130,40 @@ internal sealed class CategoryLegendRow
     public string PercentText { get; }
 }
 
+/// <summary>改色盘里的一个可选颜色。</summary>
+internal sealed class CategoryColorOption
+{
+    public CategoryColorOption(string name, string hex)
+    {
+        Name = name;
+        Hex = hex;
+        var b = new SolidColorBrush(ThemeCustomizer.ParseHex(hex) ?? Colors.Gray);
+        b.Freeze();
+        Brush = b;
+    }
+
+    public string Name { get; }
+    public string Hex { get; }
+    public Brush Brush { get; }
+}
+
 /// <summary>
 /// 应用分类面板的数据。
 ///
 /// ### 面板结构（按用户要求：统计在上、自定义在下）
 ///
-///   1. 圆环图 + 图例      —— 各分类的时长占比
-///   2. 新建分类           —— 自己起名字
-///   3. 应用列表           —— 逐个改分类，带搜索
+///   1. 周期切换（天 / 周 / 月）
+///   2. 圆环图 + 图例      —— 各分类的时长占比
+///   3. 新建分类 + 分类配色 —— 自己起名字、自己定颜色
+///   4. 应用列表           —— 逐个改分类，带搜索
 ///
-/// ### 统计口径
+/// ### 统计周期
 ///
-/// 用的是"今天"的单日数据（`GetAppTotals`）。用户没指定周期，
-/// 而单日数据在采集过程中是实时更新的，改完分类立刻能看到饼图变化——
-/// 这个即时反馈比"选周期再看"更有用。
+/// 天/周/月三种口径与主界面**同一套算法**（周从周一开始，月是自然月），
+/// 这样面板上的数字和主界面排行的数字能对上——两处口径一旦不一致，
+/// 用户会以为其中一个算错了。
+///
+/// 切换周期时**下方应用列表一起切**：列表里的时长同样按该周期算。
 /// </summary>
 internal sealed class CategoryViewModel : INotifyPropertyChanged
 {
@@ -131,19 +172,77 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
     public ObservableCollection<CategoryLegendRow> Legend { get; } = new();
     public ObservableCollection<AppCategoryRow> Apps { get; } = new();
 
-    /// <summary>全部分类名，供下拉框与"新建"使用。</summary>
+    /// <summary>全部分类名，供下拉框使用。</summary>
     public ObservableCollection<string> AllCategories { get; } = new();
 
     private string _search = "";
-    private long _totalSeconds;
     private string _totalText = "0分";
     private string _summaryText = "";
+    private string _totalCaption = "今日合计";
     private int _manualCount;
+    private RangeMode _rangeMode = RangeMode.Day;
+    private AppCategoryRow? _selectedAppRow;
 
     public CategoryViewModel(UsageStore store)
     {
         _store = store;
     }
+
+    /// <summary>
+    /// 要改颜色的分类名。
+    ///
+    /// 两个入口共用它：点分类色块（改分类本身的颜色）、点应用行旁边的色点
+    /// （改该应用所属分类的颜色）。**两者本质是同一件事**——颜色是属性，
+    /// 挂在分类上而不是单个应用上；应用行的色点只是"就近修改所属分类"的快捷方式。
+    /// </summary>
+    public string? ColorTarget
+    {
+        get => _selectedAppRow?.Category;
+        private set
+        {
+            _colorTarget = value;
+            OnPropertyChanged();
+        }
+    }
+    private string? _colorTarget;
+
+
+    /// <summary>从应用行点进来（改该应用所属分类的颜色）。</summary>
+    public void SelectAppForColor(AppCategoryRow row)
+    {
+        _selectedAppRow = row;
+        ColorTarget = row.Category;
+    }
+
+    /// <summary>当前选中分类的颜色（供取色器顶部显示"现在是什么颜色"）。</summary>
+    public Color CurrentTargetColor =>
+        ColorTarget is { Length: > 0 } name ? Categories.ColorFor(name) : Colors.Gray;
+
+
+    /// <summary>统计周期，与主界面共用 RangeMode。</summary>
+    public RangeMode RangeMode
+    {
+        get => _rangeMode;
+        set
+        {
+            if (_rangeMode == value) return;
+            _rangeMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsDay));
+            OnPropertyChanged(nameof(IsWeek));
+            OnPropertyChanged(nameof(IsMonth));
+            Refresh();
+        }
+    }
+
+    public bool IsDay => _rangeMode == RangeMode.Day;
+    public bool IsWeek => _rangeMode == RangeMode.Week;
+    public bool IsMonth => _rangeMode == RangeMode.Month;
+
+    /// <summary>取色器顶部的说明，例如「正在改『游戏』的颜色」。</summary>
+    public string ColorTargetText => ColorTarget is { Length: > 0 } n
+        ? $"正在改「{n}」的颜色"
+        : "点一个色点来改颜色";
 
     public string Search
     {
@@ -158,14 +257,21 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
         private set { _totalText = value; OnPropertyChanged(); }
     }
 
-    /// <summary>图例上方的说明，例如"共 5 小时 34 分 · 15 个应用"。</summary>
+    /// <summary>圆环中间那行小字（今日合计 / 本周合计 / 本月合计）。</summary>
+    public string TotalCaption
+    {
+        get => _totalCaption;
+        private set { _totalCaption = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>图例上方的说明，例如"今天 共 5时34分 · 15 个应用"。</summary>
     public string SummaryText
     {
         get => _summaryText;
         private set { _summaryText = value; OnPropertyChanged(); }
     }
 
-    /// <summary>手动指定过的应用数量，用于提示"重置"按钮的意义。</summary>
+    /// <summary>手动指定过的应用数量。</summary>
     public int ManualCount
     {
         get => _manualCount;
@@ -176,6 +282,35 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
         ? $"已手动指定 {_manualCount} 个应用"
         : "全部按关键字自动识别";
 
+    /// <summary>
+    /// 当前周期对应的日期区间。
+    ///
+    /// 与 RangeViewModel 用**同一套算法**：周从周一开始、月是自然月。
+    /// </summary>
+    public (DateTime From, DateTime To) CurrentRange()
+    {
+        DateTime anchor = DateTime.Today;
+        return _rangeMode switch
+        {
+            RangeMode.Week => (WeekStart(anchor), WeekStart(anchor).AddDays(6)),
+            RangeMode.Month => (new DateTime(anchor.Year, anchor.Month, 1),
+                                new DateTime(anchor.Year, anchor.Month, 1).AddMonths(1).AddDays(-1)),
+            _ => (anchor, anchor),
+        };
+    }
+
+    private static DateTime WeekStart(DateTime d)
+        => d.Date.AddDays(-(((int)d.DayOfWeek + 6) % 7));
+
+    /// <summary>按当前周期查应用汇总。</summary>
+    private List<AppTotal> Query()
+    {
+        (DateTime from, DateTime to) = CurrentRange();
+        return from == to
+            ? _store.GetAppTotals(from, 500)
+            : _store.GetAppTotalsRange(from, to, 500);
+    }
+
     /// <summary>把当前数据打包给圆环图控件。</summary>
     public List<DonutChart.Slice> BuildSlices()
     {
@@ -185,7 +320,13 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
         return list;
     }
 
-    /// <summary>重新载入分类清单（新建/删除分类后调用）。</summary>
+    /// <summary>
+    /// 重新载入分类清单（新建/删除分类后调用）。
+    ///
+    /// 只重建下拉框用的名字列表。颜色不在这里维护——改色入口是应用行尾的
+    /// 色点，颜色按分类名现取（<see cref="Categories.ColorFor"/>），
+    /// 不需要一份"色块对象"来保存状态。
+    /// </summary>
     public void ReloadCategories()
     {
         AllCategories.Clear();
@@ -197,9 +338,9 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
     {
         ReloadCategories();
 
-        List<AppTotal> totals = _store.GetAppTotals(DateTime.Today, 500);
+        List<AppTotal> totals = Query();
 
-        // ---- 饼图：按分类聚合 ----
+        // ---- 按分类聚合 ----
         var byCat = new Dictionary<string, long>(StringComparer.Ordinal);
         long grand = 0;
         foreach (AppTotal a in totals)
@@ -210,33 +351,47 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
             grand += a.Seconds;
         }
 
-        _totalSeconds = grand;
         TotalText = DurationText.Short(grand);
+        TotalCaption = _rangeMode switch
+        {
+            RangeMode.Week => "本周合计",
+            RangeMode.Month => "本月合计",
+            _ => "今日合计",
+        };
         SummaryText = grand > 0
-            ? $"今天共 {DurationText.Short(grand)} · {totals.Count} 个应用"
-            : "今天还没有记录";
+            ? $"{RangeLabel()}共 {DurationText.Short(grand)} · {totals.Count} 个应用"
+            : $"{RangeLabel()}还没有记录";
 
+        FillLegend(byCat, grand);
+        RefreshList();
+    }
+
+    private string RangeLabel() => _rangeMode switch
+    {
+        RangeMode.Week => "本周 ",
+        RangeMode.Month => "本月 ",
+        _ => "今天 ",
+    };
+
+    /// <summary>按时长降序填图例。时长为 0 的分类不显示，否则会堆一堆 0%。</summary>
+    private void FillLegend(Dictionary<string, long> byCat, long grand)
+    {
         Legend.Clear();
-        // 按时长降序，"其他"自然排到最后；时长为 0 的分类不显示，
-        // 否则图例里会堆一堆 0% 的项，看不出重点
         foreach (KeyValuePair<string, long> kv in byCat.OrderByDescending(k => k.Value))
         {
             if (kv.Value <= 0) continue;
-            Legend.Add(new CategoryLegendRow(kv.Key, kv.Value, grand, Categories.ColorOf(kv.Key)));
+            Legend.Add(new CategoryLegendRow(kv.Key, kv.Value, grand, Categories.ColorFor(kv.Key)));
         }
-
-        RefreshList();
     }
 
     /// <summary>只重建应用列表（搜索条件变化、单个应用改分类后调用）。</summary>
     private void RefreshList()
     {
-        List<AppTotal> totals = _store.GetAppTotals(DateTime.Today, 500);
+        List<AppTotal> totals = Query();
         Dictionary<string, string> manual = _store.GetAppCategories();
 
         string q = _search.Trim();
         Apps.Clear();
-        int manualCount = 0;
 
         foreach (AppTotal a in totals)
         {
@@ -249,7 +404,6 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
 
             bool isManual = a.FilePath.Length > 0 && manual.ContainsKey(a.FilePath);
             string cat = isManual ? manual[a.FilePath] : AppPalette.InferCategory(a.FilePath);
-            if (isManual) manualCount++;
 
             Apps.Add(new AppCategoryRow(
                 a.FilePath, a.DisplayName, a.Seconds, cat, isManual,
@@ -284,12 +438,37 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
         ManualCount = _store.GetAppCategories().Count;
     }
 
+    /// <summary>给某个分类设定颜色。传空恢复默认色。</summary>
+    public void SetCategoryColor(string category, string hex)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return;
+
+        Categories.SetCustomColor(category, hex);
+
+        // 两处要跟着换色：应用行尾的色点、饼图图例
+        RefreshAppRowBrushes(category);
+        RefreshLegendOnly();
+
+        OnPropertyChanged(nameof(ColorTargetText));
+        OnPropertyChanged(nameof(CurrentTargetColor));
+    }
+
+    /// <summary>某个分类的颜色变了，把属于它的应用行的色点刷新一遍。</summary>
+    private void RefreshAppRowBrushes(string category)
+    {
+        foreach (AppCategoryRow row in Apps)
+        {
+            if (string.Equals(row.Category, category, StringComparison.Ordinal))
+                row.RefreshCategoryBrush();
+        }
+    }
+
     /// <summary>只重算饼图与图例（应用列表没变时用，避免列表滚动位置丢失）。</summary>
     private void RefreshLegendOnly()
     {
         var byCat = new Dictionary<string, long>(StringComparer.Ordinal);
         long grand = 0;
-        foreach (AppTotal a in _store.GetAppTotals(DateTime.Today, 500))
+        foreach (AppTotal a in Query())
         {
             string cat = AppPalette.CategoryOf(a.FilePath);
             byCat.TryGetValue(cat, out long cur);
@@ -297,15 +476,8 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
             grand += a.Seconds;
         }
 
-        _totalSeconds = grand;
         TotalText = DurationText.Short(grand);
-
-        Legend.Clear();
-        foreach (KeyValuePair<string, long> kv in byCat.OrderByDescending(k => k.Value))
-        {
-            if (kv.Value <= 0) continue;
-            Legend.Add(new CategoryLegendRow(kv.Key, kv.Value, grand, Categories.ColorOf(kv.Key)));
-        }
+        FillLegend(byCat, grand);
     }
 
     /// <summary>清空全部手动分类。</summary>
@@ -315,8 +487,6 @@ internal sealed class CategoryViewModel : INotifyPropertyChanged
         AppPalette.ReloadManualCategories(_store);
         Refresh();
     }
-
-    public long TotalSeconds => _totalSeconds;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

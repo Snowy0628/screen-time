@@ -203,23 +203,30 @@ internal sealed class DayViewModel
         }
     }
 
-    /// <summary>由主窗口填充实时状态（当前前台应用、记录状态）。</summary>
+    /// <summary>
+    /// 由主窗口填充实时状态（当前前台应用、记录状态）。
+    ///
+    /// **文本里不要带 "●"**：那个圆点是 XAML 里的 `<c>LiveDot</c>` 元素画出来的，
+    /// 文本里再写一个就会变成两个点（一个真圆点 + 一个字符）。
+    /// 早先就是两边都画了，界面上多出一个灰色小点，看着像状态指示出了故障。
+    /// 这里只留文字，点由 LiveDot 负责，颜色由 <see cref="LiveStatusBrush"/> 决定。
+    /// </summary>
     public void SetLive(UsageState state, string appName, bool paused)
     {
         if (paused)
         {
-            LiveStatusText = "● 已暂停记录";
+            LiveStatusText = "已暂停记录";
             LiveStatusBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0x82, 0x00));
         }
         else
         {
             LiveStatusText = state switch
             {
-                UsageState.Active => "● 正在记录 · 使用中",
-                UsageState.Idle => "● 正在记录 · 空闲",
-                UsageState.Locked => "● 正在记录 · 已锁屏",
-                UsageState.Off => "● 正在记录 · 熄屏/睡眠",
-                _ => "● 正在记录",
+                UsageState.Active => "正在记录 · 使用中",
+                UsageState.Idle => "正在记录 · 空闲",
+                UsageState.Locked => "正在记录 · 已锁屏",
+                UsageState.Off => "正在记录 · 熄屏/睡眠",
+                _ => "正在记录",
             };
             LiveStatusBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0x9E, 0x6B));
         }

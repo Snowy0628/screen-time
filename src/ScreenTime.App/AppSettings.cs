@@ -92,6 +92,15 @@ internal sealed class AppSettings
     /// </summary>
     public List<string> CustomCategories { get; set; } = new();
 
+    /// <summary>
+    /// 每个分类的自定义颜色：分类名 → "#RRGGBB"。
+    ///
+    /// 没设过的分类走内置配色 / 名字哈希，所以这里只存用户改过的。
+    /// 与 <see cref="CustomCategories"/> 同理放在设置里——
+    /// 卸载时数据库可能被清空，但配色属于配置。
+    /// </summary>
+    public Dictionary<string, string> CategoryColors { get; set; } = new();
+
     // ---- 读写 ----
 
     private static readonly JsonSerializerOptions JsonOptions = new()

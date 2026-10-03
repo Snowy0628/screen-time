@@ -44,7 +44,8 @@
     <!-- 版本信息：托盘提示与任务管理器里显示的名称 -->
     <AssemblyTitle>屏幕使用时间</AssemblyTitle>
     <FileVersion>2.0.0.0</FileVersion>
-    <Version>2.0.0</Version>
+    <InformationalVersion>2.0.0-pro</InformationalVersion>
+    <Version>2.0.0-pro</Version>
   </PropertyGroup>
 
   <!--

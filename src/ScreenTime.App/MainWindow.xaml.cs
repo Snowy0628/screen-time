@@ -172,6 +172,7 @@ public partial class MainWindow : Window
         ThemeManager.Initialize(this, OnThemeChanged, msg => _owner.LogInfo(msg));
         UpdateThemeGlyph();
         ApplyThemeIcon();
+        StartLiveDotBreathing();
 
         // 图表设置要在第一次 Reload 之前推给 ViewModel，
         // 否则首屏会按默认值画、再被下一次刷新纠正（闪一下）
@@ -202,6 +203,96 @@ public partial class MainWindow : Window
     /// 画不出来也不报错，只表现为"图标不见了"。
     /// </summary>
     private System.Drawing.Icon? _windowIcon;
+
+    /// <summary>
+    /// 状态圆点的"呼吸"动效。
+    ///
+    /// 一个静止的小圆点很容易被当成装饰；让它缓慢明暗起伏，就能一眼看出
+    /// "程序还活着、正在记录"。周期取 1.6 秒——接近平静呼吸的节奏，
+    /// 再快会显得焦躁，再慢就看不出在动。
+    ///
+    /// 动效关掉时（设置里的「启用界面动效」）直接设为不透明，保持静止。
+    /// 这个开关是给低配机器和远程桌面用的，那种场景下持续动画会一直占用渲染。
+    /// </summary>
+    private void StartLiveDotBreathing()
+    {
+        if (LiveDot is null) return;
+
+        if (!AppSettings.Current.EnableAnimations)
+        {
+            LiveDot.BeginAnimation(OpacityProperty, null);
+            LiveDot.Opacity = 1;
+            return;
+        }
+
+        var breathe = new DoubleAnimation
+        {
+            From = 1.0,
+            To = 0.3,
+            Duration = TimeSpan.FromMilliseconds(1600),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        };
+        LiveDot.BeginAnimation(OpacityProperty, breathe);
+    }
+
+    /// <summary>设置里的动效开关改动后重新决定呼吸灯是否播放。</summary>
+    internal void RestartLiveDotBreathing() => StartLiveDotBreathing();
+
+    // ---- 供 --uitest 读取界面状态 ----
+    //
+    // 为什么不靠截图验证：窗口截图对 WPF 的 DirectX 合成不可靠，
+    // 实际抓取经常得到背后的窗口。把状态用文字报出来才是可靠做法。
+
+    internal bool LiveDotHasAnimation() => LiveDot.HasAnimatedProperties;
+    internal double LiveDotOpacity() => LiveDot.Opacity;
+    internal string LiveTextSnapshot() => LiveText.Text;
+
+    /// <summary>顶栏按钮的实际顺序（按 XAML 里的声明次序）。</summary>
+    internal string TopBarButtonOrder()
+    {
+        var names = new List<string>();
+        if (TabDay is not null) names.Add("范围切换");
+        if (CategoryButton is not null) names.Add("分类统计");
+        if (ThemeButton is not null) names.Add("深浅色");
+        if (SettingsButton is not null) names.Add("设置");
+        return string.Join(" → ", names);
+    }
+
+    /// <summary>柱状图刻度线的画法描述。</summary>
+    internal string DescribeChartScale()
+    {
+        int solid = 0, dashed = 0;
+        foreach (object child in HourChartScale.Children)
+        {
+            if (child is System.Windows.Shapes.Line ln)
+            {
+                if (ln.StrokeDashArray is { Count: > 0 }) dashed++;
+                else solid++;
+            }
+        }
+        return $"共 {solid + dashed} 条（实线 {solid} 条 = 满格基准线，虚线 {dashed} 条 = 15/30/45 分辅助线）";
+    }
+
+    /// <summary>
+    /// 诊断用：报告状态圆点的当前动效状态。
+    ///
+    /// 为什么需要：呼吸灯是"看得见但测不到"的东西——动画跑在渲染层，
+    /// 而窗口截图对 WPF 的 DirectX 合成不可靠（实际抓取经常得到背后的窗口）。
+    /// 这里把动画对象和当前生效的不透明度报出来，就能确定它是否真的在跑。
+    /// </summary>
+    internal string DescribeLiveDot()
+    {
+        bool animating = LiveDot.HasAnimatedProperties;
+        object baseVal = LiveDot.GetAnimationBaseValue(OpacityProperty);
+        double baseOpacity = baseVal is double d ? d : 1.0;
+
+        return $"圆点：动效={(animating ? "进行中" : "未启用")}  "
+             + $"当前不透明度={LiveDot.Opacity:0.00}  "
+             + $"基准值={baseOpacity:0.00}  "
+             + "（基准值恒为 1.00、当前值在 0.30~1.00 之间起伏即为正常呼吸）";
+    }
 
     /// <summary>
     /// 顶栏 Logo、设置面板标题图标、窗口图标，跟随深浅色切换。
@@ -281,10 +372,8 @@ public partial class MainWindow : Window
     {
         EnsureCategoryVm();
 
-        CategorySummaryText.Text = _categoryVm!.SummaryText;
-        CategoryDonut.SetData(_categoryVm.BuildSlices());
-        CategoryTotalText.Text = _categoryVm.TotalText;
-        CategoryManualHint.Text = _categoryVm.ManualHintText;
+        SyncCategoryRangeToMain();
+        RefreshCategoryPanel();
 
         CategoryOverlay.Visibility = Visibility.Visible;
         UpdateCategorySearchHint();
@@ -292,6 +381,123 @@ public partial class MainWindow : Window
         if (!AppSettings.Current.EnableAnimations) return;
         var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160));
         CategoryCard.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>
+    /// 打开面板时，周期跟随主界面当前的选择。
+    ///
+    /// 这样"在主界面看本周，点开分类也是本周"，不用再切一次；
+    /// 反过来面板里切周期**不会**改主界面——用户可能只是想临时看另一个周期。
+    /// </summary>
+    private void SyncCategoryRangeToMain()
+    {
+        bool day = TabDay.IsChecked == true;
+        bool week = TabWeek.IsChecked == true;
+
+        if (day) CatTabDay.IsChecked = true;
+        else if (week) CatTabWeek.IsChecked = true;
+        else CatTabMonth.IsChecked = true;
+    }
+
+    /// <summary>分类面板里的周期切换：饼图与下方应用列表一起切。</summary>
+    private void OnCategoryRangeChecked(object sender, RoutedEventArgs e)
+    {
+        if (_categoryVm is null) return;
+        if (sender is not RadioButton rb) return;
+
+        _categoryVm.RangeMode = (rb.Tag as string) switch
+        {
+            "Week" => RangeMode.Week,
+            "Month" => RangeMode.Month,
+            _ => RangeMode.Day,
+        };
+        RefreshCategoryPanel();
+    }
+
+    // ---- 共享取色器 ----
+
+    /// <summary>当前正在被改色的那个元素（弹窗要贴着它弹）。</summary>
+    private UIElement? _colorAnchor;
+
+    /// <summary>点应用行尾的色点：改该应用**所属分类**的颜色。</summary>
+    private void OnAppColorDotClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_categoryVm is null) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not AppCategoryRow row) return;
+        if (string.IsNullOrWhiteSpace(row.Category)) return;
+
+        _categoryVm.SelectAppForColor(row);
+        ShowColorPopup(fe);
+        e.Handled = true;
+    }
+
+    /// <summary>把共享取色器弹到被点元素旁边。</summary>
+    private void ShowColorPopup(UIElement anchor)
+    {
+        if (_categoryVm is null) return;
+
+        _colorAnchor = anchor;
+        CategoryColorPopup.PlacementTarget = anchor;
+        ColorPopupTarget.Text = _categoryVm.ColorTargetText;
+        CategoryColorHexBox.Text = "";
+        CategoryColorPopup.IsOpen = true;
+    }
+
+    /// <summary>取色器里选一个预设色。</summary>
+    private void OnCategoryColorOptionClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_categoryVm?.ColorTarget is not { Length: > 0 } target) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not CategoryColorOption opt) return;
+
+        ApplyCategoryColor(target, opt.Hex);
+        CategoryManualHint.Text = $"「{target}」的颜色已改为 {opt.Name}（{opt.Hex}）";
+        e.Handled = true;
+    }
+
+    private void OnCategoryColorHexKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) OnCategoryColorHexApply(sender, e);
+    }
+
+    /// <summary>用输入框里的色号改色。</summary>
+    private void OnCategoryColorHexApply(object sender, RoutedEventArgs e)
+    {
+        if (_categoryVm?.ColorTarget is not { Length: > 0 } target) return;
+
+        if (ThemeCustomizer.ParseHex(CategoryColorHexBox.Text) is not { } c)
+        {
+            CategoryManualHint.Text = "色号无效，请填 6 位十六进制，例如 #66CCFF";
+            return;
+        }
+
+        string hex = ThemeCustomizer.ToHex(c);
+        ApplyCategoryColor(target, hex);
+        CategoryManualHint.Text = $"「{target}」的颜色已改为 {hex}";
+    }
+
+    private void OnCategoryColorResetClick(object sender, RoutedEventArgs e)
+    {
+        if (_categoryVm?.ColorTarget is not { Length: > 0 } target) return;
+
+        ApplyCategoryColor(target, "");
+        CategoryManualHint.Text = $"「{target}」已恢复默认颜色";
+    }
+
+    /// <summary>
+    /// 改色并刷新所有受影响的显示。
+    ///
+    /// 不动用 RefreshCategoryPanel（那会重建整个应用列表），
+    /// 否则用户每试一个颜色列表就跳一次、还要重新定位——
+    /// 试色是个"连着点几下"的动作，必须保持列表稳定。
+    /// </summary>
+    private void ApplyCategoryColor(string category, string hex)
+    {
+        if (_categoryVm is null) return;
+
+        _categoryVm.SetCategoryColor(category, hex);
+
+        CategoryDonut.SetData(_categoryVm.BuildSlices());
+        ColorPopupTarget.Text = _categoryVm.ColorTargetText;
     }
 
     private void OnCategoryClose(object sender, RoutedEventArgs e) => CloseCategoryPanel();
@@ -315,6 +521,7 @@ public partial class MainWindow : Window
         _categoryVm = new CategoryViewModel(_owner.Store);
         CategoryLegendHost.ItemsSource = _categoryVm.Legend;
         CategoryAppHost.ItemsSource = _categoryVm.Apps;
+        CategoryColorOptionHost.ItemsSource = Categories.ColorOptionList;
 
         // 让 DataTemplate 里的 ComboBox 能拿到 AllCategories
         CategoryAppHost.DataContext = _categoryVm;
@@ -329,7 +536,13 @@ public partial class MainWindow : Window
 
         CategorySummaryText.Text = _categoryVm.SummaryText;
         CategoryDonut.SetData(_categoryVm.BuildSlices());
+
+        // 切换周期时顺时针扫出，给出"正在重新统计"的反馈。
+        // 注意要在 SetData 之后调，否则扫的是旧数据。
+        CategoryDonut.PlaySweep();
+
         CategoryTotalText.Text = _categoryVm.TotalText;
+        CategoryTotalCaption.Text = _categoryVm.TotalCaption;
         CategoryManualHint.Text = _categoryVm.ManualHintText;
     }
 
@@ -1004,6 +1217,10 @@ public partial class MainWindow : Window
         if (_suppressSettingsEvents) return;
         AppSettings.Current.EnableAnimations = AnimCheck.IsChecked == true;
         AppSettings.Current.Save();
+
+        // 呼吸灯也算界面动效，关掉后应当立刻停在一个静止的圆点上
+        StartLiveDotBreathing();
+
         SettingsHint.Text = AppSettings.Current.EnableAnimations ? "已启用界面动效" : "已关闭界面动效";
     }
 

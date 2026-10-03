@@ -67,6 +67,72 @@ internal static class Categories
         Color.FromRgb(0xA0, 0xA8, 0xB4),
     };
 
+    /// <summary>
+    /// 供用户挑选的分类颜色。取莫兰迪调性——与主题色预设同一套观感，
+    /// 避免用户挑出高饱和色把饼图搞得刺眼。
+    /// </summary>
+    public static readonly (string Name, string Hex)[] ColorPresets =
+    {
+        ("雾蓝",   "#7A93AD"),
+        ("藕荷",   "#B08CA8"),
+        ("苔绿",   "#9AA58C"),
+        ("鼠尾草", "#8AA68F"),
+        ("陶土",   "#C08A88"),
+        ("燕麦",   "#B39B7D"),
+        ("灰紫",   "#9585AC"),
+        ("中性灰", "#9A9FA8"),
+        ("天青",   "#66CCFF"),
+        ("靛蓝",   "#6E8BB8"),
+    };
+
+    /// <summary>预设色的画刷列表，供取色器绑定。构造一次后冻结，不重复创建。</summary>
+    public static readonly IReadOnlyList<CategoryColorOption> ColorOptionList = BuildOptions();
+
+    private static IReadOnlyList<CategoryColorOption> BuildOptions()
+    {
+        var list = new List<CategoryColorOption>(ColorPresets.Length);
+        foreach ((string name, string hex) in ColorPresets)
+            list.Add(new CategoryColorOption(name, hex));
+        return list;
+    }
+
+    /// <summary>
+    /// 用户为某个分类指定的颜色。返回 null 表示没设过，用默认色。
+    ///
+    /// 这个覆盖值让"饼图配色"变成用户可控的——默认那套是按分类名写死的，
+    /// 用户新加的分类只能拿到哈希出来的随配色，看着会撞色。
+    /// </summary>
+    public static Color? CustomColorOf(string category)
+    {
+        try
+        {
+            if (AppSettings.Current.CategoryColors.TryGetValue(category, out string? hex))
+            {
+                if (ThemeCustomizer.ParseHex(hex) is { } c) return c;
+            }
+        }
+        catch
+        {
+            // 设置损坏时退回默认色
+        }
+        return null;
+    }
+
+    /// <summary>设定某个分类的颜色。传空表示恢复默认。</summary>
+    public static void SetCustomColor(string category, string hex)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return;
+
+        AppSettings s = AppSettings.Current;
+        if (string.IsNullOrWhiteSpace(hex)) s.CategoryColors.Remove(category);
+        else s.CategoryColors[category] = hex.Trim();
+        s.Save();
+    }
+
+    /// <summary>取分类颜色：用户指定优先，否则按名字取内置/哈希色。</summary>
+    public static Color ColorFor(string category)
+        => CustomColorOf(category) ?? ColorOf(category);
+
     /// <summary>取分类颜色。未知分类按名字哈希从备用池里取，保证稳定。</summary>
     public static Color ColorOf(string category)
     {

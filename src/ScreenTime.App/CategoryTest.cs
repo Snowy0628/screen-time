@@ -150,6 +150,53 @@ internal static class CategoryTest
             Check(Math.Abs(pctSum - 100.0) < 0.0001, $"各分类占比之和为 100%（实测 {pctSum:0.####}%）");
 
             Check(!byCat.ContainsKey(""), "不存在空分类名");
+
+            // ---- 11. 周期切换的日期区间 ----
+            //
+            // 三种周期的口径必须与主界面一致（周从周一开始、月是自然月），
+            // 否则面板上的数字和主界面排行对不上，用户会以为其中一个算错了。
+            using var vm = new UsageStore(AppPaths.DatabasePath);   // 只为构造 ViewModel
+            var catVm = new CategoryViewModel(vm);
+
+            catVm.RangeMode = RangeMode.Day;
+            (DateTime dFrom, DateTime dTo) = catVm.CurrentRange();
+            Check(dFrom == DateTime.Today && dTo == DateTime.Today, "「日」区间就是今天");
+            Check(catVm.TotalCaption == "今日合计", "「日」的中心小字是「今日合计」");
+
+            catVm.RangeMode = RangeMode.Week;
+            (DateTime wFrom, DateTime wTo) = catVm.CurrentRange();
+            Check(wFrom.DayOfWeek == DayOfWeek.Monday, $"「周」从周一开始（实际 {wFrom.DayOfWeek}）");
+            Check((wTo - wFrom).Days == 6, $"「周」跨 7 天（实际 {(wTo - wFrom).Days + 1} 天）");
+            Check(wFrom <= DateTime.Today && DateTime.Today <= wTo, "今天落在本周区间内");
+            Check(catVm.TotalCaption == "本周合计", "「周」的中心小字是「本周合计」");
+
+            catVm.RangeMode = RangeMode.Month;
+            (DateTime mFrom, DateTime mTo) = catVm.CurrentRange();
+            Check(mFrom.Day == 1, "「月」从 1 号开始");
+            Check(mFrom.Month == DateTime.Today.Month && mFrom.Year == DateTime.Today.Year,
+                  "「月」是当前自然月");
+            Check(mTo.AddDays(1).Day == 1, "「月」的最后一天是月末");
+            Check(catVm.TotalCaption == "本月合计", "「月」的中心小字是「本月合计」");
+
+            // 周与月是**两个独立区间**，只保证都包含今天。
+            // 曾经写过"月区间必须覆盖周区间"——那是错的：周一所在的周常常跨月
+            // （比如 10 月 3 日是周六，本周从 9 月 28 日开始），
+            // 此时周区间会有一半落在上个月，断言必然失败。
+            Check(wFrom <= DateTime.Today && DateTime.Today <= wTo, "周区间包含今天");
+            Check(mFrom <= DateTime.Today && DateTime.Today <= mTo, "月区间包含今天");
+
+            // ---- 12. 分类颜色覆盖 ----
+            string before = ThemeCustomizer.ToHex(Categories.ColorFor("娱乐"));
+            Categories.SetCustomColor("娱乐", "#123456");
+            string after = ThemeCustomizer.ToHex(Categories.ColorFor("娱乐"));
+            Check(after == "#123456", $"自定义分类色生效（{before} → {after}）");
+            Categories.SetCustomColor("娱乐", "");
+            Check(ThemeCustomizer.ToHex(Categories.ColorFor("娱乐")) == before,
+                  "清除自定义色后恢复默认");
+
+            // 未知分类也要能拿到颜色（否则饼图会出现无色扇区）
+            Check(Categories.ColorFor("一个没定义过的分类名") != default,
+                  "未定义的分类也能拿到兜底色");
         }
         catch (Exception ex)
         {

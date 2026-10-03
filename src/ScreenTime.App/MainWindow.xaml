@@ -304,8 +304,13 @@
 
             <!-- 右侧：实时状态 + 范围切换 + 主题切换 -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <!--
+                    状态胶囊的圆角改成 10，与右侧的「日/周/月」分段控件一致。
+                    原来是 999（全圆胶囊），两个控件并排时形状语言不统一：
+                    一个圆头一个方角，看着像两套设计拼在一起。
+                -->
                 <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
-                        BorderThickness="1" CornerRadius="999" Padding="11,5" Margin="0,0,10,0">
+                        BorderThickness="1" CornerRadius="10" Padding="11,5" Margin="0,0,10,0">
                     <StackPanel Orientation="Horizontal">
                         <Ellipse x:Name="LiveDot" Width="7" Height="7" Fill="{DynamicResource DownBrush}"
                                  VerticalAlignment="Center"/>
@@ -473,9 +478,10 @@
                         -->
                         <Border CornerRadius="8" ClipToBounds="True" Height="38"
                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
-                                Background="{DynamicResource Surface3Brush}">
-                            <Grid>
-                                <Grid x:Name="TimelineGrid"/>
+                                Background="{DynamicResource Surface3Brush}"
+                                Focusable="False" FocusVisualStyle="{x:Null}">
+                            <Grid Focusable="False" FocusVisualStyle="{x:Null}">
+                                <Grid x:Name="TimelineGrid" Focusable="False" FocusVisualStyle="{x:Null}"/>
                                 <!-- 整点分隔线：叠在色块之上，给出时间参照 -->
                                 <Grid x:Name="TimelineGridLines" IsHitTestVisible="False"/>
                             </Grid>
@@ -514,10 +520,20 @@
                 <!-- ===== 分时应用分布 ===== -->
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
-                        <Grid Margin="0,0,0,12">
+                        <Grid Margin="0,0,0,10">
                             <TextBlock Text="分时应用分布" Style="{StaticResource CardTitle}"/>
+                            <!--
+                                副标题只讲"怎么看"，不再堆三条参数说明。
+                                原来那句「每根柱 = 1 小时 · 柱高 = 前台使用时长 ·
+                                色块按图标主色 · 悬停看 Top3 应用」把刻度、读法、配色、
+                                交互全塞在一行，读起来是清单不是句子。现在：
+                                  · 轴上的数字已经写明单位是小时，不必再说"每根柱 = 1 小时"
+                                  · 柱子高低一眼能看出是时长，不必解释"柱高 = 时长"
+                                  · 配色与悬停属于"用过就知道"的东西，放在提示里更合适
+                                留一句读法就够了。
+                            -->
                             <TextBlock Style="{StaticResource Hint}" HorizontalAlignment="Right"
-                                       Text="每根柱 = 1 小时 · 柱高 = 前台使用时长 · 色块按图标主色 · 悬停看 Top3 应用"/>
+                                       Text="横轴为一天 24 小时，柱高为该小时的时长；悬停查看该时段明细"/>
                         </Grid>
 
                         <!--
@@ -529,10 +545,16 @@
 
                             HourChartScale 是下层：铺 15/30/45/60 分的时长刻度线 +
                             左侧刻度文字，让柱高可以直接量出来，不必悬停。
+
+                            Focusable=False + FocusVisualStyle={x:Null}：
+                            图表本身不可交互（交互在每根柱子上），但容器一旦拿到焦点，
+                            WPF 会画一圈虚线焦点框把整个图表圈起来，看着像界面坏了。
+                            这里显式关掉——键盘用户也不需要"聚焦到图表"这个能力。
                         -->
-                        <Grid Height="176" Margin="0,0,0,4">
+                        <Grid Height="176" Margin="0,0,0,4"
+                              Focusable="False" FocusVisualStyle="{x:Null}">
                             <Grid x:Name="HourChartScale" IsHitTestVisible="False"/>
-                            <Grid x:Name="HourChart"/>
+                            <Grid x:Name="HourChart" Focusable="False" FocusVisualStyle="{x:Null}"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -1125,6 +1147,31 @@
                                            Foreground="{DynamicResource Text3Brush}"/>
                             </StackPanel>
                         </StackPanel>
+
+                        <!--
+                            周期切换：口径与主界面一致（周从周一算、月是自然月）。
+                            切这里下方列表也跟着切，两处显示同一个周期。
+                        -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                    VerticalAlignment="Center" Margin="0,0,34,0">
+                            <Border Background="{DynamicResource Surface3Brush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="9" Padding="3">
+                                <StackPanel Orientation="Horizontal">
+                                    <RadioButton x:Name="CatTabDay" Style="{StaticResource SegmentButton}"
+                                                 Content="日" GroupName="CatRange" IsChecked="True"
+                                                 Tag="Day" Checked="OnCategoryRangeChecked"/>
+                                    <RadioButton x:Name="CatTabWeek" Style="{StaticResource SegmentButton}"
+                                                 Content="周" GroupName="CatRange"
+                                                 Tag="Week" Checked="OnCategoryRangeChecked"/>
+                                    <RadioButton x:Name="CatTabMonth" Style="{StaticResource SegmentButton}"
+                                                 Content="月" GroupName="CatRange"
+                                                 Tag="Month" Checked="OnCategoryRangeChecked"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- 关闭按钮：放在标题行右侧。周期切换靠左让出位置 -->
                         <Button HorizontalAlignment="Right" VerticalAlignment="Top"
                                 Style="{StaticResource TextButton}" Content="&#xE711;"
                                 FontFamily="Segoe MDL2 Assets" Click="OnCategoryClose"
@@ -1160,7 +1207,7 @@
                                                               Opacity="0.55" Color="Black"/>
                                         </TextBlock.Effect>
                                     </TextBlock>
-                                    <TextBlock Text="今日合计" FontSize="10.5" HorizontalAlignment="Center"
+                                    <TextBlock x:Name="CategoryTotalCaption" Text="今日合计" FontSize="10.5" HorizontalAlignment="Center"
                                                Margin="0,2,0,0" Foreground="White" Opacity="0.85">
                                         <TextBlock.Effect>
                                             <DropShadowEffect BlurRadius="4" ShadowDepth="0"
@@ -1207,7 +1254,7 @@
                         </Grid>
                     </Border>
 
-                    <!-- 新建分类 -->
+                    <!-- 新建 / 删除分类 -->
                     <Grid Grid.Row="2" Margin="22,0,22,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -1229,6 +1276,70 @@
                                 ToolTip="删除一个自定义分类（系统默认分类不能删）"/>
                     </Grid>
 
+                    <!--
+                        共享取色器。只造一个，按需放到被点的色点旁边。
+
+                        为什么不做成"每行一个 Popup"：应用列表可能有上百行，
+                        每行造一个 Popup（含 10 个色块 + 输入框）纯属浪费；
+                        而且同一时刻只可能改一个颜色，共享完全够用。
+
+                        StaysOpen=False 让点击外部自动关闭，符合弹出层的常规行为。
+                    -->
+                    <Popup x:Name="CategoryColorPopup" StaysOpen="False"
+                           Placement="Bottom" AllowsTransparency="True"
+                           PopupAnimation="Fade" Focusable="True">
+                        <Border Margin="0,4,0,0" Padding="12,10" CornerRadius="10"
+                                Background="{DynamicResource DialogSurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="16" ShadowDepth="0" Opacity="0.22"/>
+                            </Border.Effect>
+
+                            <StackPanel Width="248">
+                                <TextBlock x:Name="ColorPopupTarget" FontSize="11.5" Margin="0,0,0,8"
+                                           Foreground="{DynamicResource TextBrush}"/>
+
+                                <!-- 预设色 -->
+                                <ItemsControl x:Name="CategoryColorOptionHost">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="24" Height="24" CornerRadius="6"
+                                                    Margin="0,0,6,6" Cursor="Hand"
+                                                    Background="{Binding Brush}"
+                                                    ToolTip="{Binding Name}"
+                                                    MouseLeftButtonUp="OnCategoryColorOptionClick"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- 自定义色号 -->
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="CategoryColorHexBox" Grid.Column="0" Padding="6,4"
+                                             VerticalContentAlignment="Center"
+                                             ToolTip="填十六进制色号，例如 #66CCFF"
+                                             KeyDown="OnCategoryColorHexKeyDown"/>
+                                    <Button Grid.Column="1" Content="应用" Margin="6,0,0,0"
+                                            Style="{StaticResource TextButton}" Padding="8,3"
+                                            Click="OnCategoryColorHexApply"/>
+                                    <Button Grid.Column="2" Content="默认" Margin="2,0,0,0"
+                                            Style="{StaticResource TextButton}" Padding="8,3"
+                                            Click="OnCategoryColorResetClick"
+                                            ToolTip="恢复该分类的默认颜色"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+
                     <!-- 应用列表 -->
                     <Grid Grid.Row="3" Margin="22,0,22,0">
                         <Grid.RowDefinitions>
@@ -1248,7 +1359,13 @@
                                        Foreground="{DynamicResource Text3Brush}"/>
                         </Grid>
 
-                        <!-- 表头 -->
+                        <!--
+                            表头。
+                            "色点改的是分类色"这句必须写明：删掉上方那行分类色块之后，
+                            这里成了唯一的改色入口，而用户点的是**某一个应用**旁边的点，
+                            很容易以为只改这一个应用。实际改的是它所属的分类，
+                            同分类的所有应用与饼图里那一块都会跟着变。
+                        -->
                         <Grid Grid.Row="1" Margin="0,0,12,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -1260,7 +1377,8 @@
                             <TextBlock Grid.Column="1" Text="时长" FontSize="11" MinWidth="58"
                                        TextAlignment="Right" Margin="0,0,14,0"
                                        Foreground="{DynamicResource Text3Brush}"/>
-                            <TextBlock Grid.Column="2" Text="分类" FontSize="11" Width="140"
+                            <TextBlock Grid.Column="2" FontSize="11" Width="136"
+                                       Text="分类　（点色点改该分类的颜色）"
                                        Foreground="{DynamicResource Text3Brush}"/>
                         </Grid>
 
@@ -1295,16 +1413,38 @@
                                                        Margin="0,0,14,0" VerticalAlignment="Center"
                                                        Foreground="{DynamicResource Text2Brush}"/>
 
-                                            <StackPanel Grid.Column="2" Width="140">
-                                                <ComboBox ItemsSource="{Binding DataContext.AllCategories,
-                                                            RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                          SelectedItem="{Binding Category, Mode=TwoWay}"
-                                                          SelectionChanged="OnAppCategoryChanged"
-                                                          FontSize="12"/>
-                                                <TextBlock Text="{Binding ManualHint}" FontSize="9.5"
-                                                           Margin="2,2,0,0"
-                                                           Foreground="{DynamicResource Text3Brush}"/>
-                                            </StackPanel>
+                                            <Grid Grid.Column="2">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="112"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <StackPanel Grid.Column="0">
+                                                    <ComboBox ItemsSource="{Binding DataContext.AllCategories,
+                                                                RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                              SelectedItem="{Binding Category, Mode=TwoWay}"
+                                                              SelectionChanged="OnAppCategoryChanged"
+                                                              FontSize="12"/>
+                                                    <TextBlock Text="{Binding ManualHint}" FontSize="9.5"
+                                                               Margin="2,2,0,0"
+                                                               Foreground="{DynamicResource Text3Brush}"/>
+                                                </StackPanel>
+
+                                                <!--
+                                                    色点：点它改**该应用所属分类**的颜色。
+
+                                                    颜色是分类的属性、不是单个应用的属性，所以这里
+                                                    改的是分类色（会同时影响饼图里那一块和所有
+                                                    同分类的应用）。放在分类框旁边是因为
+                                                    "我想让这个应用显示成别的颜色"是最自然的起点。
+                                                -->
+                                                <Border Grid.Column="1" Width="18" Height="18"
+                                                        CornerRadius="5" Margin="6,0,0,0"
+                                                        VerticalAlignment="Top" Cursor="Hand"
+                                                        Background="{Binding CategoryBrush}"
+                                                        ToolTip="改该分类的颜色"
+                                                        MouseLeftButtonUp="OnAppColorDotClick"/>
+                                            </Grid>
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
