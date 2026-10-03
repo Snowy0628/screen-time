@@ -82,12 +82,10 @@ internal sealed class TrayContext : IDisposable
     /// 供其它组件写一行信息级日志。
     ///
     /// 存在的意义：ThemeManager 这类静态工具类需要记日志（主题切换链路出问题时
-    /// 没日志就只能靠猜），但它不该持有一个 Log 实例。给个窄接口最省事。
+    /// 没日志就只能靠猜是哪一环断的），但它不该持有一个 Log 实例。
+    /// 只开这一个入口——不用的接口就是死代码。
     /// </summary>
     public void LogInfo(string message) => _log.Info(message);
-
-    /// <summary>供其它组件写一行警告级日志。</summary>
-    public void LogWarn(string message) => _log.Warn(message);
 
     /// <summary>是否已暂停记录。</summary>
     public bool IsPaused => _paused;
