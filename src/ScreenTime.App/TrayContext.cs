@@ -1103,6 +1103,32 @@ internal sealed class TrayContext : IDisposable
         return tray;
     }
 
+    /// <summary>
+    /// 按当前深浅色重建托盘图标。
+    ///
+    /// 图标是黑白两套（浅色模式白底黑线、深色模式黑底白线），切换主题后
+    /// 必须换掉，否则托盘会与应用内 Logo、窗口图标不一致。
+    /// 由设置面板的主题切换回调调用。
+    /// </summary>
+    public void RefreshTrayIcon()
+    {
+        try
+        {
+            if (_tray is null) return;
+
+            Icon? old = _tray.Icon;
+            _tray.Icon = BuildIcon();
+
+            // 旧图标要显式释放：Icon 持有 GDI 句柄，
+            // 反复切主题不释放会一直漏。
+            old?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"刷新托盘图标失败：{ex.Message}");
+        }
+    }
+
     /// <summary>由 Program 注入主窗口引用，供托盘双击唤回。</summary>
     public void AttachWindow(Window window)
     {
@@ -1183,30 +1209,30 @@ internal sealed class TrayContext : IDisposable
     /// <summary>
     /// 取托盘图标：**黑白简约风格**，圆角方块底 + 圆环 + 时针分针。
     ///
+    /// ### 配色逻辑
+    ///
+    /// **浅色模式白底黑线，深色模式黑底白线**——与应用内 Logo、窗口图标
+    /// 完全同一套规则，不搞"跟随任务栏明暗反转"那种独立判断。
+    /// 两处图标规则不一致时，同一个界面上会出现相反的观感。
+    ///
+    /// 取的是程序自己的深色/浅色设置（包括"跟随系统"时解析出的实际结果），
+    /// 而不是只看任务栏的注册表值。
+    ///
     /// ### 为什么不从 exe 里抠图标
     ///
-    /// 早先的做法是 `ExtractIconEx` 取程序自带的 .ico。那个图标是彩色的
-    /// 蓝紫渐变，和"黑白简约"的要求不符；而且它在浅色/深色任务栏上都不能保证
-    /// 清楚。用户明确要求托盘图标是黑白的，所以这里改为**完全代码绘制**，
-    /// 也就顺带解决了"exe 图标想换风格还得重新打包资源"的问题。
-    ///
-    /// ### 为什么要跟随任务栏明暗反转
-    ///
-    /// 用户的原话是"蓝色区域变白、白色区域变黑"。但那样做在**浅色任务栏**
-    /// （白底）上会变成"白底图标 + 看不见的白色部分"，看着像残缺的。
-    /// 所以采用 A 方案：黑白配色不变，但整体**跟随系统主题反转**——
-    ///   浅色任务栏 → 黑底白线
-    ///   深色任务栏 → 白底黑线
-    /// 两种情况下都清楚，且始终是黑白。
+    /// 早先是 `ExtractIconEx` 取程序自带的彩色 .ico，和"黑白简约"的要求
+    /// 不符；而且它在浅色/深色任务栏上都不能保证清楚。改成完全代码绘制后，
+    /// 顺带解决了"exe 图标想换风格还得重新打包资源"的问题。
     /// </summary>
     private static Icon BuildIcon()
     {
-        bool lightTaskbar = IsLightTaskbar();
+        bool lightMode = !ThemeManager.IsDark;
 
-        // 浅色任务栏用深色图标，深色任务栏用浅色图标
-        Color background = lightTaskbar ? Color.FromArgb(0x1B, 0x1D, 0x21)
-                                        : Color.FromArgb(0xF5, 0xF6, 0xF8);
-        Color foreground = lightTaskbar ? Color.White : Color.FromArgb(0x1B, 0x1D, 0x21);
+        // 浅色模式：白底 + 黑线；深色模式：黑底 + 白线
+        Color background = lightMode ? Color.FromArgb(0xF7, 0xF8, 0xFA)
+                                     : Color.FromArgb(0x1B, 0x1D, 0x21);
+        Color foreground = lightMode ? Color.FromArgb(0x1B, 0x1D, 0x21)
+                                     : Color.FromArgb(0xF7, 0xF8, 0xFA);
 
         try
         {
@@ -1259,30 +1285,6 @@ internal sealed class TrayContext : IDisposable
             }
             return SystemIcons.Application;
         }
-    }
-
-    /// <summary>
-    /// 任务栏（系统 UI）当前是不是浅色。
-    ///
-    /// 读的是 `SystemUsesLightTheme` 而不是 `AppsUseLightTheme`：
-    /// 前者管任务栏和开始菜单，后者管应用窗口，两者可以分开设置。
-    /// 托盘图标贴在任务栏上，所以要跟前者走。
-    /// 读不到时按浅色处理——大多数人的任务栏是浅色的。
-    /// </summary>
-    private static bool IsLightTaskbar()
-    {
-        try
-        {
-            using Microsoft.Win32.RegistryKey? key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            object? v = key?.GetValue("SystemUsesLightTheme");
-            if (v is int i) return i != 0;
-        }
-        catch
-        {
-            // 读不到按浅色
-        }
-        return true;
     }
 
     [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]

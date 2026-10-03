@@ -285,10 +285,14 @@
         <!-- ===== 顶栏 ===== -->
         <Grid Grid.Row="0" Margin="22,18,22,10" Panel.ZIndex="2">
             <StackPanel Orientation="Horizontal">
-                <Border Width="30" Height="30" CornerRadius="9" Background="{DynamicResource HeroBrush}">
-                    <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="15"
-                               Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
+                <!--
+                    用程序图标本身当 Logo（见 csproj 里的 Resource 项），
+                    不再用字体符号——这样和任务栏、桌面快捷方式长得一模一样。
+                    图标固定是默认品牌色（蓝紫渐变）；界面里的强调色跟用户
+                    选的主题色走，两者分工明确。
+                -->
+                <Image x:Name="BrandIcon" Width="30" Height="30"
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
                 <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="屏幕使用时间" FontSize="15.5" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextBrush}"/>
@@ -783,12 +787,13 @@
                     <!-- 标题 -->
                     <Grid Grid.Row="0" Margin="22,18,14,12">
                         <StackPanel Orientation="Horizontal">
-                            <Border Width="28" Height="28" CornerRadius="8"
-                                    Background="{DynamicResource HeroBrush}">
-                                <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="13"
-                                           Foreground="White" HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"/>
-                            </Border>
+                            <!--
+                                设置面板的标题图标也用界面 Logo，与顶栏保持一致。
+                                之前这里是个蓝紫渐变方块 + 齿轮字形，换主题色时不变，
+                                和已经改成黑白的顶栏 Logo 对不上。
+                            -->
+                            <Image x:Name="SettingsBrandIcon" Width="28" Height="28"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
                             <TextBlock Text="设置" FontSize="15.5" FontWeight="SemiBold" Margin="10,0,0,0"
                                        VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextBrush}"/>

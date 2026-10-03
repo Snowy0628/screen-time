@@ -74,4 +74,16 @@
     <ProjectReference Include="..\ScreenTime.Core\ScreenTime.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      界面 Logo 与窗口图标按浅色/深色模式各准备一套，运行时切换。
+      配色逻辑与托盘图标一致：浅色模式白底黑线，深色模式黑底白线。
+      Logo 用透明底的单色墨迹（直接叠在卡片上，不能带方块底色）。
+    -->
+    <Resource Include="..\..\assets\logo-lightmode.png" Link="Assets\logo-lightmode.png" />
+    <Resource Include="..\..\assets\logo-darkmode.png" Link="Assets\logo-darkmode.png" />
+    <Resource Include="..\..\assets\app-light.ico" Link="Assets\app-light.ico" />
+    <Resource Include="..\..\assets\app-dark.ico" Link="Assets\app-dark.ico" />
+  </ItemGroup>
+
 </Project>

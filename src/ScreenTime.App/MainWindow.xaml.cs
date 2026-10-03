@@ -165,6 +165,7 @@ public partial class MainWindow : Window
     {
         ThemeManager.Initialize(this, OnThemeChanged);
         UpdateThemeGlyph();
+        ApplyThemeIcon();
 
         // 图表设置要在第一次 Reload 之前推给 ViewModel，
         // 否则首屏会按默认值画、再被下一次刷新纠正（闪一下）
@@ -184,6 +185,79 @@ public partial class MainWindow : Window
         // 各分区的入场动效：整体淡入 + 轻微上移
         if (AppSettings.Current.EnableAnimations) PlayEntrance();
     }
+
+
+    /// <summary>
+    /// 窗口图标用的 Icon 对象，**必须留一个字段持有**。
+    ///
+    /// `WM_SETICON` 只是把句柄交给 Windows，系统**不会复制图标数据**。
+    /// 早先写成 `using var icon = new Icon(...)`，方法一返回就 Dispose、
+    /// 句柄被销毁，于是标题栏图标变成空白——界面拿一个已失效的句柄去画，
+    /// 画不出来也不报错，只表现为"图标不见了"。
+    /// </summary>
+    private System.Drawing.Icon? _windowIcon;
+
+    /// <summary>
+    /// 顶栏 Logo、设置面板标题图标、窗口图标，跟随深浅色切换。
+    ///
+    /// **配色逻辑与托盘图标完全一致**：浅色模式白底黑线，深色模式黑底白线。
+    /// 统一成一条规则，免得同一个界面上出现相反的观感。
+    ///
+    /// 窗口图标（标题栏左上角 + Alt+Tab）用 `WM_SETICON` 运行时替换，
+    /// 必须同时设 ICON_SMALL 和 ICON_BIG，否则两处会不一致。
+    ///
+    /// exe 内嵌图标（`app.ico`）固定用**浅色模式那一版**（白底黑线）——
+    /// 资源管理器/桌面快捷方式取的是文件资源图标，运行时改不了。
+    /// </summary>
+    private void ApplyThemeIcon()
+    {
+        try
+        {
+            bool dark = ThemeManager.IsDark;
+
+            // Logo：透明底的单色墨迹，浅色模式黑墨、深色模式白墨。
+            // 顶栏和设置面板标题共用同一张。
+            string logoName = dark ? "logo-darkmode.png" : "logo-lightmode.png";
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri($"pack://application:,,,/Assets/{logoName}", UriKind.Absolute);
+            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+            BrandIcon.Source = bmp;
+            if (SettingsBrandIcon is not null) SettingsBrandIcon.Source = bmp;
+
+            // 窗口图标：浅色模式白底黑线，深色模式黑底白线
+            string icoName = dark ? "app-dark.ico" : "app-light.ico";
+            var uri = new Uri($"pack://application:,,,/Assets/{icoName}", UriKind.Absolute);
+            using Stream? s = System.Windows.Application.GetResourceStream(uri)?.Stream;
+            if (s is null) return;
+
+            IntPtr hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
+
+            // 新建前先释放上一个：Icon 持有 GDI 句柄，反复切主题不释放会一直漏。
+            // 注意释放的是**上一个**，刚建出来的这个要留给 Windows 用。
+            var fresh = new System.Drawing.Icon(s);
+            System.Drawing.Icon? old = _windowIcon;
+            _windowIcon = fresh;
+
+            // ICON_SMALL(0) 和 ICON_BIG(1) 都要设，否则标题栏与 Alt+Tab 会不一致
+            SendMessage(hwnd, WM_SETICON, (IntPtr)0, fresh.Handle);
+            SendMessage(hwnd, WM_SETICON, (IntPtr)1, fresh.Handle);
+
+            old?.Dispose();
+        }
+        catch
+        {
+            // 图标换不了不影响使用，保留 exe 内嵌的那个
+        }
+    }
+
+    private const uint WM_SETICON = 0x0080;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     // ================= 设置面板 =================
 
@@ -1580,6 +1654,11 @@ public partial class MainWindow : Window
     private void OnThemeChanged(AppTheme mode)
     {
         UpdateThemeGlyph();
+
+        // Logo、窗口图标、托盘图标都是黑白两套，跟着深浅色一起换。
+        // 三处必须同时刷新，否则同一个界面上会出现相反的观感。
+        ApplyThemeIcon();
+        _owner.RefreshTrayIcon();
 
         // 背景图那套东西依赖当前深浅色：遮罩颜色、卡片半透明底色都要跟着换，
         // 否则深色主题下会留一层白蒙蒙的卡片底。
