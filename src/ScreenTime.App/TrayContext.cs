@@ -78,6 +78,17 @@ internal sealed class TrayContext : IDisposable
 
     // ---- 供状态窗口读取的接口 ----
 
+    /// <summary>
+    /// 供其它组件写一行信息级日志。
+    ///
+    /// 存在的意义：ThemeManager 这类静态工具类需要记日志（主题切换链路出问题时
+    /// 没日志就只能靠猜），但它不该持有一个 Log 实例。给个窄接口最省事。
+    /// </summary>
+    public void LogInfo(string message) => _log.Info(message);
+
+    /// <summary>供其它组件写一行警告级日志。</summary>
+    public void LogWarn(string message) => _log.Warn(message);
+
     /// <summary>是否已暂停记录。</summary>
     public bool IsPaused => _paused;
 
@@ -1108,20 +1119,34 @@ internal sealed class TrayContext : IDisposable
     ///
     /// 图标是黑白两套（浅色模式白底黑线、深色模式黑底白线），切换主题后
     /// 必须换掉，否则托盘会与应用内 Logo、窗口图标不一致。
-    /// 由设置面板的主题切换回调调用。
+    /// 由 MainWindow.OnThemeChanged 调用，覆盖"设置里改 / 顶栏按钮切 /
+    /// 跟随系统时 Windows 广播"这三种触发。
     /// </summary>
     public void RefreshTrayIcon()
     {
         try
         {
-            if (_tray is null) return;
+            if (_tray is null)
+            {
+                _log.Warn("刷新托盘图标：托盘对象还不存在，跳过");
+                return;
+            }
 
             Icon? old = _tray.Icon;
-            _tray.Icon = BuildIcon();
+            Icon fresh = BuildIcon();
 
-            // 旧图标要显式释放：Icon 持有 GDI 句柄，
-            // 反复切主题不释放会一直漏。
+            // 只改 Icon 属性，Shell_NotifyIcon 有时不会立刻重画——
+            // 隐藏再显示一次可以强制它重新注册。
+            // 这个手法在 explorer 重启恢复托盘时已经验证有效（见 OnTaskbarCreated）。
+            _tray.Visible = false;
+            _tray.Icon = fresh;
+            _tray.Visible = true;
+
+            // 旧图标要显式释放：Icon 持有 GDI 句柄，反复切主题不释放会一直漏。
+            // 放在 Visible=true 之后，避免释放了 Shell 还在用的句柄。
             old?.Dispose();
+
+            _log.Info($"托盘图标已按{(ThemeManager.IsDark ? "深色" : "浅色")}模式重建");
         }
         catch (Exception ex)
         {

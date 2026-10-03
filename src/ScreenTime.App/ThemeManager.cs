@@ -36,13 +36,22 @@ internal static class ThemeManager
     private static HwndSource? _hook;
     private static Action<AppTheme>? _onChanged;
 
+    /// <summary>
+    /// 日志回调。Core 层不依赖 App 的 Log，这里用注入的方式接进来。
+    /// 主题切换（尤其是"跟随系统"时 Windows 广播触发的那种）出问题时，
+    /// 没有日志就只能靠猜是哪一环断的。
+    /// </summary>
+    private static Action<string>? _log;
+
     public static AppTheme Mode => _mode;
     public static bool IsDark => _currentIsDark;
 
     /// <summary>初始化：应用主题并挂接系统主题变化通知。</summary>
-    public static void Initialize(Window hookWindow, Action<AppTheme>? onChanged = null)
+    public static void Initialize(Window hookWindow, Action<AppTheme>? onChanged = null,
+                                  Action<string>? log = null)
     {
         _onChanged = onChanged;
+        _log = log;
 
         // 先拿到窗口句柄：标题栏深色化需要它，必须在 Apply 之前
         var helper = new WindowInteropHelper(hookWindow);
@@ -203,6 +212,7 @@ internal static class ThemeManager
             // "ImmersiveColorSet" 就是浅色/深色切换的广播标识
             if (string.Equals(area, ImmersiveColorSet, StringComparison.Ordinal))
             {
+                _log?.Invoke("收到系统深浅色切换广播，重新应用主题");
                 Apply(AppTheme.System);
                 _onChanged?.Invoke(AppTheme.System);
             }

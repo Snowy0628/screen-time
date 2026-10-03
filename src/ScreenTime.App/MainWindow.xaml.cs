@@ -163,7 +163,7 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        ThemeManager.Initialize(this, OnThemeChanged);
+        ThemeManager.Initialize(this, OnThemeChanged, msg => _owner.LogInfo(msg));
         UpdateThemeGlyph();
         ApplyThemeIcon();
 
@@ -1657,6 +1657,9 @@ public partial class MainWindow : Window
 
         // Logo、窗口图标、托盘图标都是黑白两套，跟着深浅色一起换。
         // 三处必须同时刷新，否则同一个界面上会出现相反的观感。
+        //
+        // 这条路径覆盖三种触发：设置面板里改、顶栏按钮循环切、
+        // 以及"跟随系统"时 Windows 广播 ImmersiveColorSet（系统切深浅色）。
         ApplyThemeIcon();
         _owner.RefreshTrayIcon();
 
