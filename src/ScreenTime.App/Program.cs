@@ -87,15 +87,111 @@ internal static class Program
     private static readonly HashSet<string> ReportedFatal = new();
 
     /// <summary>
-    /// 请求已运行实例退出，以便本进程接管（"再次双击快捷方式"的唯一路径）。
+    /// 唤醒已运行实例的主窗口。
+    ///
+    /// 机制：用 RegisterWindowMessage 注册的那个消息名找到老实例的消息窗口，
+    /// 给它 PostMessage。老实例的 TaskbarWatcherWindow 收到后调 ShowWindow()——
+    /// 那是**它自己进程内的 WPF 调用**，不是跨进程操作别人的窗口，所以可靠。
+    ///
+    /// **为什么要这条路**：此前的做法是"接管"——请求老实例退出、本进程接手。
+    /// 但老实例退出和新实例接管之间有真空期，托盘图标会消失几秒。
+    /// 用户看到的现象就是"开机自启成功后，过了几分钟程序自己没了"——
+    /// 其实是他又启动了一次，把正在安静记录的实例顶掉了，还留下数据空档。
+    ///
+    /// 找不到老窗口时返回 false，调用方回退到接管方式（保证功能不会因为
+    /// 这条新路出问题而彻底失效）。
+    /// </summary>
+    private static bool TryWakeExistingInstance()
+    {
+        try
+        {
+            uint msg = RegisterWindowMessage(WakeUpMessage);
+            if (msg == 0) return false;
+
+            foreach (System.Diagnostics.Process p in
+                     System.Diagnostics.Process.GetProcessesByName("ScreenTime.App"))
+            {
+                if (p.Id == Environment.ProcessId) continue;
+
+                // 发给该进程的**所有**顶层窗口，而不是只挑一个。
+                //
+                // 为什么这样更稳：老实例至少有两个顶层窗口（WPF 主窗口 +
+                // TaskbarWatcherWindow 消息窗口），而 EnumWindows 的返回顺序是
+                // Z 序、不保证哪个在前。早先只取第一个，结果拿到的是主窗口——
+                // 主窗口虽然也处理这条消息，但实测没反应，窗口始终没出来。
+                // 注册消息在系统范围内是唯一的（RegisterWindowMessage 对同一
+                // 字符串永远返回同一个 id），所以只有本程序的消息窗口会处理它，
+                // 发给多余窗口没有任何副作用。
+                var targets = FindTopLevelWindows(p.Id);
+                if (targets.Count == 0) continue;
+
+                int sent = 0;
+                foreach (IntPtr hwnd in targets)
+                {
+                    if (PostMessage(hwnd, msg, IntPtr.Zero, IntPtr.Zero)) sent++;
+                }
+
+                if (sent > 0)
+                {
+                    Boot($"已向 PID={p.Id} 的 {sent}/{targets.Count} 个顶层窗口发送唤醒消息");
+                    return true;
+                }
+            }
+
+            Boot("没找到可唤醒的实例窗口");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Boot($"唤醒已有实例失败: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>枚举指定进程的全部顶层窗口句柄。</summary>
+    private static System.Collections.Generic.List<IntPtr> FindTopLevelWindows(int pid)
+    {
+        var list = new System.Collections.Generic.List<IntPtr>();
+        try
+        {
+            EnumWindows((hwnd, _) =>
+            {
+                GetWindowThreadProcessId(hwnd, out uint wpid);
+                if (wpid == (uint)pid) list.Add(hwnd);
+                return true;      // 继续枚举，收集全部
+            }, IntPtr.Zero);
+        }
+        catch
+        {
+            // 枚举失败当作没找到
+        }
+        return list;
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>
+    /// 请求已运行实例退出，以便本进程接管（"再次双击快捷方式"的兜底路径）。
     ///
     /// 机制：在数据目录写一个接管请求文件，老实例在自己的定时循环里发现它就会
     /// 收尾退出。用文件是因为它不依赖任何进程间通信能力，在受限会话里同样可用。
     ///
-    /// **为什么不"跨进程把老窗口显示出来"**：那条路试过两种写法都出问题——
+    /// 这条路径现在只在 <see cref="TryWakeExistingInstance"/> 失败时才走：
+    /// 唤醒是首选（不打断采集、托盘图标不消失），接管是兜底。
+    ///
+    /// **为什么不直接跨进程把老窗口显示出来**：那条路试过两种写法都出问题——
     /// `SW_RESTORE` 会让界面全黑，换成 `SW_SHOW` 后新进程又可能与老进程互相干扰、
     /// 最终两个都没了。跨进程操作别人的 WPF 窗口状态本身就不可靠；
-    /// 而"老实例退出 + 新实例全新窗口"每次都能得到可正常渲染的界面。
+    /// 所以改成"请求对端自己 ShowWindow"，见 TryWakeExistingInstance。
     /// </summary>
     private static bool TryTakeOverFromExistingInstance()
     {
@@ -443,7 +539,23 @@ internal static class Program
         Mutex? instanceMutex = TryAcquireInstanceMutex();
         if (instanceMutex is null)
         {
-            Boot("检测到已有实例，请求它退出以便本进程接管");
+            Boot("检测到已有实例");
+
+            // 先试"唤醒"：让已运行的实例把窗口显示出来，本进程随即退出。
+            // 这条路不打断采集，用户也不会看到托盘图标消失。
+            bool woke = TryWakeExistingInstance();
+            if (woke)
+            {
+                Boot("已唤醒已有实例的窗口，本进程退出（不接管）");
+                // 稍等一下再退出：PostMessage 是异步投递，进程立刻结束虽然
+                // 不影响消息送达，但留一点时间更稳妥。
+                System.Threading.Thread.Sleep(300);
+                return 0;
+            }
+
+            // 唤醒失败（找不到窗口、或对端异常）才回退到旧的"接管"方式：
+            // 请求老实例退出，本进程接手。代价是中间会有几秒没有托盘图标。
+            Boot("唤醒失败，回退到接管方式");
             TryTakeOverFromExistingInstance();
 
             // 等待老实例退出并释放单实例锁

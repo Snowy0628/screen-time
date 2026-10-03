@@ -24,7 +24,7 @@
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
 
     <ApplicationIcon>..\assets\app.ico</ApplicationIcon>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <AssemblyTitle>屏幕使用时间 安装程序</AssemblyTitle>
     <Product>屏幕使用时间</Product>
   </PropertyGroup>

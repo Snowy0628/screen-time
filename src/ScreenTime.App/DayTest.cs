@@ -82,6 +82,69 @@ internal static class DayTest
             Console.WriteLine("  ✓ 片段首尾相接，无重叠");
         }
 
+        // ---- 分格必须**恰好 1 小时**，且格子边界要落在整点上 ----
+        //
+        // 为什么要单独查：格数正确不代表边界正确。曾经分格粒度从 3 小时改成
+        // 1 小时后，色块变成 24 格但**刻度标签仍是旧的一套 9 列布局**，
+        // 于是"03:00"被画到了 4 小时的位置，看起来像分隔线穿过了 2–3 点那格。
+        // 光看代码不容易发现，截图又要靠肉眼。这里直接把每格的时长和起点
+        // 与整点比对。
+        int badBuckets = 0;
+        for (int i = 0; i < vm.Timeline.Count; i++)
+        {
+            SegmentVm s = vm.Timeline[i];
+            long secs = (long)s.Seconds;
+
+            // 每格时长必须等于 3600 秒（分格粒度就是 1 小时）
+            bool lenOk = secs == 3600;
+            if (!lenOk && badBuckets < 3)
+            {
+                Console.WriteLine($"  ✗ 第 {i} 格时长 {secs}s，应为 3600s（1 小时）");
+            }
+
+            if (!lenOk) badBuckets++;
+        }
+
+        Console.WriteLine($"时间轴格数: {vm.Timeline.Count}");
+        if (badBuckets > 0)
+        {
+            Console.WriteLine($"  ✗ 有 {badBuckets} 格不是 1 小时（刻度会与色块对不齐）");
+            failures++;
+        }
+        else
+        {
+            Console.WriteLine("  ✓ 每格恰好 1 小时，格子边界落在整点");
+        }
+
+        // 格子边界必须与小时刻度对齐：第 i 格的起点应当是整点。
+        // 这条能抓住"刻度按另一套布局画"这类偏位问题。
+        //
+        // 注意：第 0 格的 Tooltip 用 en-dash 分隔，但"还没到"那些格的文本
+        // 结构略有不同，所以这里只取第一个分隔符之前的内容，再裁掉空白。
+        int misaligned = 0;
+        var hourRe = new System.Text.RegularExpressions.Regex(@"^\d{2}:00$");
+        foreach (SegmentVm s in vm.Timeline)
+        {
+            string[] parts = s.Tooltip.Split('–');
+            if (parts.Length < 2) continue;
+
+            string start = parts[0].Trim();
+            if (hourRe.IsMatch(start)) continue;
+
+            misaligned++;
+            if (misaligned <= 3)
+                Console.WriteLine($"  ✗ 起点不是整点: [{start}]");
+        }
+        if (misaligned > 0)
+        {
+            Console.WriteLine($"  ✗ 有 {misaligned} 格起点不在整点，刻度会与色块对不齐");
+            failures++;
+        }
+        else
+        {
+            Console.WriteLine("  ✓ 每格起点都在整点，与小时刻度同源");
+        }
+
         // 打印前若干段，便于人工核对
         Console.WriteLine("  片段明细（最多 10 条）:");
         int shown = 0;

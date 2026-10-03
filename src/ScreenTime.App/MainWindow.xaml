@@ -481,8 +481,14 @@
                             WPF 会在固定高度内自动按秒数比例分配像素）。
                             之所以不用 UniformGrid：末尾的 "24:00" 刻度只在 24 列之外
                             多占一点点宽度，UniformGrid 无法表达这种"24 等分 + 尾巴"的布局。
+
+                            HourChartScale 是下层：铺 15/30/45/60 分的时长刻度线 +
+                            左侧刻度文字，让柱高可以直接量出来，不必悬停。
                         -->
-                        <Grid x:Name="HourChart" Height="176" Margin="0,0,0,4"/>
+                        <Grid Height="176" Margin="0,0,0,4">
+                            <Grid x:Name="HourChartScale" IsHitTestVisible="False"/>
+                            <Grid x:Name="HourChart"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 

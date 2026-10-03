@@ -584,6 +584,7 @@ public partial class MainWindow : Window
                 if (needCharts)
                 {
                     BuildTimeline();
+                    BuildHourChartScale();
                     BuildHourChart();
                     _lastChartBuildUtc = DateTime.UtcNow;
                     _lastChartDay = _vm.SelectedDate;
@@ -846,36 +847,49 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 时间轴上的整点分隔线（每 3 小时一条）。
-    /// 用 25 等分的网格而不是按段定位：段宽是"时长比例"，
-    /// 直接算像素位置会随窗口宽度变化而失准。
+    /// 时间轴上的整点分隔线，**按小时对齐**。
+    ///
+    /// 用 24 等分的网格而不是按段定位：段宽是"时长比例"，
+    /// 直接算像素位置会随窗口宽度变化而失准。24 等分与色块的列边界
+    /// 严格同源（都是 1 小时一格），所以线一定落在整点上。
+    ///
+    /// 三层强度，让时间轴既能数出小时、又不会显得杂乱：
+    ///   · 整点细线（每小时）    —— 能数格子
+    ///   · 3 小时线稍强          —— 与上方刻度对应
+    ///   · 午夜线最粗            —— 提示"这里进入次日"
+    ///
+    /// 早先这里只画每 3 小时一条，而且刻度标签用的是另一套 9 列布局，
+    /// 导致标签比线偏了 1 小时（详见 BuildTimelineScale 的说明）。
     /// </summary>
     private void BuildTimelineGridLines()
     {
         TimelineGridLines.Children.Clear();
         TimelineGridLines.ColumnDefinitions.Clear();
 
-        // 与刻度对齐：每 3 小时一条分隔线，首尾不画
         int startHour = _vm.ChartStartHour;
 
-        for (int i = 0; i <= 8; i++)
+        for (int i = 0; i < 24; i++)
         {
             TimelineGridLines.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = new GridLength(3, GridUnitType.Star),
+                Width = new GridLength(1, GridUnitType.Star),
             });
 
-            if (i is 0 or 8) continue;
+            // 起点不画线（与色块条左边框重合）
+            if (i == 0) continue;
+
+            int hour = (startHour + i) % 24;
 
             // 跨过午夜的那条线画得更明显，提示"这里进入次日"
-            bool isMidnight = (startHour + i * 3) % 24 == 0;
+            bool isMidnight = hour == 0;
+            bool isThreeHour = hour % 3 == 0;
 
             var line = new Border
             {
                 Width = isMidnight ? 2 : 1,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Background = FindResource("SurfaceBrush") as Brush ?? Brushes.White,
-                Opacity = isMidnight ? 0.9 : 0.55,
+                Opacity = isMidnight ? 0.85 : (isThreeHour ? 0.45 : 0.22),
             };
             Grid.SetColumn(line, i);
             TimelineGridLines.Children.Add(line);
@@ -940,49 +954,111 @@ public partial class MainWindow : Window
         return null;
     }
 
-    /// <summary>时间轴上方的小时刻度。</summary>
+    /// <summary>
+    /// 时间轴上方的小时刻度。
+    ///
+    /// **这里曾经画错，原因值得记下来。**
+    ///
+    /// 刻度原本用「9 列布局、标签在各列居中」来对齐「每 3 小时一条分隔线」。
+    /// 那在分格粒度也是 3 小时的时候是对的。后来时间轴改成**每格 1 小时**、
+    /// 24 个等宽色块，刻度却仍是 9 列——于是：
+    ///
+    ///   色块：每格 1/24 = 4.1667%
+    ///   分隔线：第 i 条画在 (i/8) 处 → 3 小时处 ✓ 正确
+    ///   标签：第 i 个居中于第 i 列 → "03:00" 落在 1.5/9 = 16.67% = **4 小时处**
+    ///
+    /// 标签比它标注的那条线向右偏了整整 1 小时，看起来就像分隔线穿过了
+    /// 「02:00 – 03:00」那一格的中间。
+    ///
+    /// 现在改成**按小时对齐**：24 个等宽列，每个标签贴在该小时列的最左侧，
+    /// 与色块的列边界严格同源；末尾 24:00 右对齐。
+    /// 只标注 0/3/6… 这些 3 的倍数，避免 24 个标签挤在一起。
+    /// </summary>
     private void BuildTimelineScale()
     {
         TimelineScale.Children.Clear();
         TimelineScale.ColumnDefinitions.Clear();
 
-        // 刻度跟随显示窗口的起始小时：起始 0 点时显示 00:00 … 21:00 … 24:00
         int startHour = _vm.ChartStartHour;
 
-        for (int i = 0; i <= 8; i++)
+        for (int i = 0; i < 24; i++)
         {
             TimelineScale.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = new GridLength(3, GridUnitType.Star),
+                Width = new GridLength(1, GridUnitType.Star),
             });
 
-            string text;
-            if (i == 8)
-            {
-                // 收尾刻度：起始 0 点时终点其实也是 0 点，
-                // 直接写会变成"左边 00:00、右边又 00:00"。
-                // 按习惯写成 24:00（这一天到 24 点结束），与柱状图保持一致。
-                text = startHour == 0 ? "24:00" : $"{startHour:00}:00";
-            }
-            else
-            {
-                text = $"{((startHour + i * 3) % 24):00}:00";
-            }
+            int hour = (startHour + i) % 24;
+            if (hour % 3 != 0) continue;
 
             var tb = new TextBlock
             {
-                Text = text,
+                Text = $"{hour:00}:00",
                 FontSize = 10.5,
                 Foreground = FindResource("Text3Brush") as Brush ?? Brushes.Gray,
-                HorizontalAlignment = i switch
-                {
-                    0 => HorizontalAlignment.Left,
-                    8 => HorizontalAlignment.Right,
-                    _ => HorizontalAlignment.Center,
-                },
+                HorizontalAlignment = HorizontalAlignment.Left,
             };
             Grid.SetColumn(tb, i);
             TimelineScale.Children.Add(tb);
+        }
+
+        // 收尾刻度：右对齐贴在最右侧，表示窗口终点
+        var end = new TextBlock
+        {
+            Text = startHour == 0 ? "24:00" : $"{startHour:00}:00",
+            FontSize = 10.5,
+            Foreground = FindResource("Text3Brush") as Brush ?? Brushes.Gray,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        Grid.SetColumn(end, 23);
+        TimelineScale.Children.Add(end);
+    }
+
+    /// <summary>
+    /// 柱状图背景的时长刻度线：15 / 30 / 45 / 60 分。
+    ///
+    /// 为什么需要：柱高表示"这一小时里前台使用了多久"，但没有横向参照时
+    /// 读不出具体时长——一根柱子到底是 20 分钟还是 50 分钟，只能靠悬停。
+    /// 加上刻度线后一眼就能量出来。
+    ///
+    /// 最上面的 60 分线与图表顶端重合，它同时还是"满格"的基准线，
+    /// 所以画得比其他几条实一些。
+    /// </summary>
+    private static readonly int[] ScaleMarksMinutes = { 15, 30, 45, 60 };
+
+    /// <summary>在柱状图区域铺一层时长刻度线（放在柱子下层）。</summary>
+    private void BuildHourChartScale()
+    {
+        HourChartScale.Children.Clear();
+
+        foreach (int minutes in ScaleMarksMinutes)
+        {
+            double y = BarAreaHeight * (1.0 - minutes / 60.0);
+
+            var line = new Border
+            {
+                Height = 1,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, y, 0, 0),
+                BorderBrush = FindResource("BorderBrush") as Brush ?? Brushes.LightGray,
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Opacity = minutes == 60 ? 0.8 : 0.45,
+                // 边框只能画实线，虚线用 StrokeDashArray 需要 Rectangle；
+                // 这里用 Border 的实线 + 较低透明度，视觉上同样是"参考线"，
+                // 且不会与柱子的色块抢注意力。
+            };
+            HourChartScale.Children.Add(line);
+
+            var label = new TextBlock
+            {
+                Text = $"{minutes}分",
+                FontSize = 9.5,
+                Foreground = FindResource("Text3Brush") as Brush ?? Brushes.Gray,
+                VerticalAlignment = VerticalAlignment.Top,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, y - 7, 4, 0),
+            };
+            HourChartScale.Children.Add(label);
         }
     }
 
@@ -1120,10 +1196,12 @@ public partial class MainWindow : Window
         //
         // 起始 0 点时窗口是 [今天00:00 → 明天00:00]，终点其实也是 0 点，
         // 于是"左边 0 点、右边又 0 点"——看着像首尾重复。
-        // 按用户习惯应写成 **24:00**：一天到 24 点结束，
-        // 第 24 根柱子是 23:00–24:00，24:00 本身只是刻度、没有柱子。
-        // 起始点非 0 点时（滚动窗口）仍显示真实的收尾钟点。
-        string endText = _vm.ChartStartHour == 0 ? "24:00" : $"{_vm.ChartStartHour:00}:00";
+        //
+        // 这里必须与左边那些 `00`/`01`…`23` 的写法**保持同一种风格**：
+        // 它们只写小时数字，所以终点写 `24`。
+        // （早先写的是 "24:00"，与旁边清一色的两位数并排时明显不搭。）
+        // 起始点非 0 点时的滚动窗口，终点用同样的两位数字写法。
+        string endText = _vm.ChartStartHour == 0 ? "24" : $"{_vm.ChartStartHour:00}";
         var endLabel = new TextBlock
         {
             Text = endText,
