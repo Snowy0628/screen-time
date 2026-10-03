@@ -1,22 +1,46 @@
 namespace ScreenTime.Core;
 
 /// <summary>
-/// 键鼠空闲检测。基于 GetLastInputInfo，统计的是整机（所有会话输入设备）的最后输入时间。
-/// 注意 dwTime 是 32 位 tick，约 49.7 天回绕一次，因此必须用无符号差值计算。
+/// 空闲检测。三路输入合并判断，任一满足即视为"人在电脑前"：
 ///
-/// **全屏应用不判空闲**：看视频、看网课、玩游戏时长时间不碰键鼠，
-/// 但人明明在电脑前。只按输入空闲判定会把这些时间误记成"空闲"，
-/// 于是"真正在使用"的统计严重偏低。
-/// 这里用 Windows 官方的 SHQueryUserNotificationState 判断是否存在
-/// 全屏/演示状态的前台窗口，是则视为活跃。
+///   1. **键鼠**：GetLastInputInfo（整机最后输入时间）。
+///      注意 dwTime 是 32 位 tick，约 49.7 天回绕一次，必须用无符号差值计算。
+///
+///   2. **手柄**：XInput 轮询。只统计键鼠会误判——用手柄玩游戏时长时间不碰
+///      键鼠，明明在玩却会被记成空闲。窗口化玩游戏时尤其明显。
+///
+///   3. **前台在放媒体**：见 <see cref="MediaWatcher"/>。看视频时既不动键鼠
+///      也（可能）不用手柄，但人明明在看。
+///
+/// 判据：
+/// <code>
+///   空闲 = 键鼠空闲超阈值 且 手柄空闲超阈值 且 前台没在放媒体
+///          （且，如果启用了全屏判据，前台窗口也没占据整屏）
+/// </code>
+///
+/// **关于"前台在放媒体"为什么限定前台**：后台挂个音乐播放器不该算"在使用"，
+/// 那是用户明确要求的行为。限定前台之后还有个好处——不用区分"视频还是音频"：
+/// 看视频时播放器必然在前台，挂后台听歌时前台是别的程序，靠位置就分开了，
+/// 也就不需要维护播放器白名单（用户担心过白名单的兼容性）。
 /// </summary>
 public sealed class IdleWatcher
 {
     /// <summary>超过该秒数无输入即判为空闲。</summary>
     public int IdleThresholdSeconds { get; set; } = 60;
 
-    /// <summary>是否把全屏应用视为活跃（不判空闲）。</summary>
+    /// <summary>是否把"前台窗口占据整屏"视为活跃（不判空闲）。</summary>
     public bool TreatFullscreenAsActive { get; set; } = true;
+
+    /// <summary>
+    /// 媒体观察器。为 null 时该判据不生效（退化为只看键鼠/手柄/窗口）。
+    /// 由外部注入，因为它的生命周期比 IdleWatcher 长。
+    /// </summary>
+    public MediaWatcher? Media { get; set; }
+
+    /// <summary>
+    /// 手柄空闲判定器。为 null 时该判据不生效。
+    /// </summary>
+    public GamepadWatcher? Gamepad { get; set; }
 
     private NativeMethods.LASTINPUTINFO _lii;
 
@@ -35,6 +59,16 @@ public sealed class IdleWatcher
         uint now = NativeMethods.GetTickCount();
         // 无符号差值天然处理 32 位回绕
         return (now - _lii.dwTime) / 1000u;
+    }
+
+    /// <summary>是否正在使用（三路输入任一活跃）。</summary>
+    public bool IsInUse()
+    {
+        if (IdleSeconds() < (uint)Math.Max(1, IdleThresholdSeconds)) return true;
+        if (Gamepad is { } g && !g.IsIdleFor(IdleThresholdSeconds)) return true;
+        if (Media is { } m && m.ForegroundIsPlaying) return true;
+        if (TreatFullscreenAsActive && IsFullscreenAppRunning()) return true;
+        return false;
     }
 
     /// <summary>
@@ -204,15 +238,36 @@ public sealed class IdleWatcher
         }
     }
 
+    /// <summary>是否空闲。等价于 <c>!IsInUse()</c>，保留此名以免调用方大改。</summary>
+    public bool IsIdle() => !IsInUse();
+
     /// <summary>
-    /// 是否空闲。
-    /// 无输入超过阈值**且**没有全屏应用时才成立——
-    /// 全屏看视频不算离开电脑。
+    /// 诊断用：把当前三路输入的状态逐条列出来，
+    /// 供 `--idlecheck` 回答"为什么这段被记成空闲/使用"。
     /// </summary>
-    public bool IsIdle()
+    public System.Collections.Generic.List<string> DescribeInputs()
     {
-        if (IdleSeconds() < (uint)Math.Max(1, IdleThresholdSeconds)) return false;
-        if (TreatFullscreenAsActive && IsFullscreenAppRunning()) return false;
-        return true;
+        var lines = new System.Collections.Generic.List<string>();
+        uint kb = IdleSeconds();
+        int th = Math.Max(1, IdleThresholdSeconds);
+
+        lines.Add($"空闲阈值       : {th} 秒");
+        lines.Add($"键鼠距上次输入 : {kb} 秒  → {(kb < th ? "活跃" : "已空闲")}");
+
+        if (Gamepad is { } g)
+            lines.Add($"手柄距上次输入 : {g.IdleSeconds()} 秒  → {(g.IsIdleFor(th) ? "已空闲" : "活跃")}"
+                      + (g.Connected ? "" : "（未连接手柄）"));
+        else
+            lines.Add("手柄检测       : 未启用");
+
+        if (Media is { } m)
+            lines.Add("媒体播放       : " + m.Describe());
+        else
+            lines.Add("媒体播放       : 未启用");
+
+        lines.Add($"全屏判据       : {(TreatFullscreenAsActive ? "启用" : "关闭")}"
+                  + (TreatFullscreenAsActive ? $"  → {(IsFullscreenAppRunning() ? "前台占据整屏（算活跃）" : "前台未占据整屏")}" : ""));
+
+        return lines;
     }
 }

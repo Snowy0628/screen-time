@@ -1,7 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!--
+      必须带 Windows 版本号：MediaWatcher 用的系统媒体传输控件（SMTC）是
+      WinRT API，只有指定目标平台版本才可用。本项目只跑 Windows 11。
+    -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>ScreenTime.Core</RootNamespace>
     <AssemblyName>ScreenTime.Core</AssemblyName>
     <!-- 采集层只需要 Win32 与 WinForms 的系统事件，不需要 WPF -->

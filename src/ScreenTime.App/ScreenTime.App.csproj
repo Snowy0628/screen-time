@@ -2,7 +2,16 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!--
+      必须带 Windows 版本号，不能只写 net8.0-windows。
+      检测"前台是否在放视频"用的是系统媒体传输控件（SMTC，
+      Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager），
+      它是 WinRT API，只有带上目标平台版本才可用。
+      本程序本来就只跑 Windows 11，加这个后缀没有额外代价。
+    -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- 声明最低支持到 Win10 1809；SMTC 在这之后都有 -->
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>ScreenTime.App</RootNamespace>
     <AssemblyName>ScreenTime.App</AssemblyName>
 
@@ -34,8 +43,8 @@
     <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
     <!-- 版本信息：托盘提示与任务管理器里显示的名称 -->
     <AssemblyTitle>屏幕使用时间</AssemblyTitle>
-    <FileVersion>1.5.0.0</FileVersion>
-    <Version>1.5.0</Version>
+    <FileVersion>1.6.0.0</FileVersion>
+    <Version>1.6.0</Version>
   </PropertyGroup>
 
   <!--

@@ -36,6 +36,17 @@ internal sealed class TrayContext : IDisposable
     /// <summary>本次运行的唯一标识，用于心跳文件判断"上次是不是异常结束"。</summary>
     private readonly string _runToken = Guid.NewGuid().ToString("N").Substring(0, 8);
 
+    /// <summary>
+    /// 媒体播放观察器：判断前台程序是否在放媒体（SMTC）。
+    ///
+    /// 它自己开后台线程按 3 秒间隔查询并把结果缓存起来，因为采集循环是同步的、
+    /// 每秒跑一次，不能在里面做异步调用。
+    /// </summary>
+    private readonly MediaWatcher _media;
+
+    /// <summary>手柄观察器：XInput 轮询，解决"用手柄玩游戏被判空闲"。</summary>
+    private readonly GamepadWatcher _gamepad = new();
+
     /// <summary>本实例的启动时刻，用于判断接管请求是不是发给自己的。</summary>
     private readonly DateTime _startedUtc = DateTime.UtcNow;
 
@@ -610,6 +621,14 @@ internal sealed class TrayContext : IDisposable
         _log = log;
         _requestShutdown = requestShutdown;
 
+        // 媒体观察器在这里创建：它需要把消息写进日志，而日志是构造参数。
+        // Core 层不认识 App 的 Log 类，所以用回调把两者接起来。
+        _media = new MediaWatcher((msg, warn) =>
+        {
+            if (warn) _log.Warn(msg); else _log.Info(msg);
+        });
+        _gamepad = new GamepadWatcher();
+
         _recorder.GapDetected += seconds =>
         {
             _log.Warn($"检测到时间缺口 {seconds} 秒（睡眠或时钟跳变），已按熄屏回填");
@@ -905,6 +924,12 @@ internal sealed class TrayContext : IDisposable
             AppSettings s = AppSettings.Current;
             _recorder.Configure(s.IdleThresholdSeconds, s.FlushIntervalSeconds,
                                 s.FullscreenCountsAsActive);
+
+            // 媒体观察器与手柄观察器在这里挂上：它们生命周期比 IdleWatcher 长，
+            // 由 TrayContext 持有，设置面板改动时不需要重建。
+            _recorder.Idle.Media = _media;
+            _recorder.Idle.Gamepad = _gamepad;
+
             _log.Info($"已应用设置：空闲阈值 {s.IdleThresholdSeconds}s，" +
                       $"落库间隔 {s.FlushIntervalSeconds}s，" +
                       $"全屏算作活跃 {(s.FullscreenCountsAsActive ? "是" : "否")}");

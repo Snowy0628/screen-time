@@ -388,31 +388,73 @@ internal static class Program
                     {
                         // 空闲判定诊断：打印当前为什么被判为「活跃」或「空闲」。
                         //
-                        // 用户很难自己判断"我这个窗口到底算不算全屏/最大化"，
-                        // 而这个判定直接决定时间轴里那段是"前台使用"还是"空闲"。
-                        // 有了这个命令，遇到"明明是看视频却被记成空闲"时
-                        // 可以直接看出来是哪一环没匹配上。
+                        // 判定涉及三路输入（键鼠 / 手柄 / 前台媒体播放）加窗口几何，
+                        // 用户很难自己判断是哪一环没匹配上。这个命令把每一路的
+                        // 原始读数和结论都列出来，遇到"明明是看视频却被记成空闲"
+                        // 之类的问题可以直接定位。
                         ConsoleHelper.Ensure();
                         Console.WriteLine("=== 空闲判定诊断 ===");
                         try
                         {
+                            var settings = AppSettings.Current;
+                            using var media = new ScreenTime.Core.MediaWatcher();
+                            using var gamepad = new ScreenTime.Core.GamepadWatcher();
+
                             var probe = new ScreenTime.Core.IdleWatcher
                             {
-                                IdleThresholdSeconds = AppSettings.Current.IdleThresholdSeconds,
-                                TreatFullscreenAsActive = AppSettings.Current.FullscreenCountsAsActive,
+                                IdleThresholdSeconds = settings.IdleThresholdSeconds,
+                                TreatFullscreenAsActive = settings.FullscreenCountsAsActive,
+                                Media = media,
+                                Gamepad = gamepad,
                             };
-                            Console.WriteLine($"  空闲阈值        : {probe.IdleThresholdSeconds} 秒");
-                            Console.WriteLine($"  全屏算作活跃    : {(probe.TreatFullscreenAsActive ? "是" : "否")}");
-                            Console.WriteLine($"  距上次键鼠输入  : {probe.IdleSeconds()} 秒");
+
+                            Console.WriteLine("── 判据来源 ──");
+                            foreach (string line in probe.DescribeInputs())
+                                Console.WriteLine("  " + line);
+
                             Console.WriteLine();
+                            Console.WriteLine("── 前台窗口几何 ──");
                             foreach (string line in ScreenTime.Core.IdleWatcher.DescribeForeground())
                                 Console.WriteLine("  " + line);
+
+                            // 媒体观察器与手柄观察器都跑在后台线程上，
+                            // 要给它俩一点时间出第一个采样结果，否则读到的
+                            // 永远是初始值（"没在放"），看起来像功能没生效。
                             Console.WriteLine();
-                            Console.WriteLine($"  是否判为空闲    : {(probe.IsIdle() ? "是（这段会记为空闲）" : "否（这段记为前台使用）")}");
+                            Console.WriteLine("  等待 4 秒让后台观察器出首个采样…");
+                            System.Threading.Thread.Sleep(4000);
+
                             Console.WriteLine();
-                            Console.WriteLine("  提示：把一个窗口最大化或全屏，再运行一次本命令，");
-                            Console.WriteLine("        可以看到「覆盖工作区」是否变成 True。");
+                            Console.WriteLine("── 采样后结论 ──");
+                            foreach (string line in probe.DescribeInputs())
+                                Console.WriteLine("  " + line);
+                            Console.WriteLine();
+                            Console.WriteLine($"  最终是否判为空闲 : {(probe.IsIdle() ? "是（这段会记为空闲）" : "否（这段记为前台使用）")}");
                             return 0;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[异常] {ex}");
+                            return 2;
+                        }
+                    }
+
+                case "--mediacheck":
+                    {
+                        // 媒体检测诊断：把 SMTC 的原始会话数据、名称匹配结果
+                        // 和最终判定全部打出来。
+                        //
+                        // 为什么要单独一条命令：媒体判定的核心是"会话的
+                        // AppUserModelId 能不能和前台进程名对上"，而这个映射
+                        // 各程序写法不同（PotPlayer 给 "PotPlayerMini64.exe"，
+                        // Edge 给 "MSEdge" 而进程名是 msedge）。出问题时
+                        // 必须能看到原始字符串才能判断是匹配规则不够宽，
+                        // 还是播放器根本没上报。
+                        ConsoleHelper.Ensure();
+                        Console.WriteLine("=== 媒体播放检测诊断 ===");
+                        try
+                        {
+                            return MediaCheck.Run();
                         }
                         catch (Exception ex)
                         {
